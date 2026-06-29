@@ -1,0 +1,19 @@
+# Secrets & personal data — never commit these
+.env
+data/secrets.json
+data/profile.json
+data/preferences.json
+data/jobfinder.db
+data/resume_source.*
+data/outputs/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Playwright browser auth state
+data/browser_state/
