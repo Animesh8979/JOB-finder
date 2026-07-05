@@ -282,6 +282,9 @@ def resume_to_text(resume: dict[str, Any]) -> str:
 # --- convenience -------------------------------------------------------------
 def generate_documents(job: dict[str, Any], resume_dict: dict[str, Any], cover_text: str, style_config: dict[str, Any] | None = None) -> dict[str, str]:
     """Write all four files and return their paths."""
+    from .cv_builder import generate_cv_pdf
+    import shutil
+    
     name = resume_dict.get("name", "")
     contact = resume_dict.get("contact", "")
     rstem, cstem = output_stem(job, "resume"), output_stem(job, "cover_letter")
@@ -292,8 +295,18 @@ def generate_documents(job: dict[str, Any], resume_dict: dict[str, Any], cover_t
     paths["resume_docx"] = str(rdocx)
 
     rpdf = rstem.with_suffix(".pdf")
-    save_text_pdf(resume_to_text(resume_dict), rpdf, title=name, contact=contact, style_config=style_config)
-    paths["resume_pdf"] = str(rpdf)
+    theme = "classic"
+    if style_config and style_config.get("template") == "Modern":
+        theme = "sb2nov"
+        
+    rendercv_pdf_path = generate_cv_pdf(job, resume_dict, theme=theme)
+    if rendercv_pdf_path:
+        if str(rpdf) != rendercv_pdf_path:
+            shutil.copy2(rendercv_pdf_path, str(rpdf))
+        paths["resume_pdf"] = str(rpdf)
+    else:
+        save_text_pdf(resume_to_text(resume_dict), rpdf, title=name, contact=contact, style_config=style_config)
+        paths["resume_pdf"] = str(rpdf)
 
     cdocx = cstem.with_suffix(".docx")
     save_cover_letter_docx(cover_text, cdocx, name, contact, style_config)

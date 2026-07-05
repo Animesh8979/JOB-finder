@@ -24,6 +24,15 @@ def _get_encoder() -> SentenceTransformer:
             _encoder_instance = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
     return _encoder_instance
 
+
+def preload_encoder() -> None:
+    """Eagerly load the embedding model on startup so the first request isn't blocked.
+
+    Call this from FastAPI's lifespan event in server.py.
+    Safe to call multiple times — the global guard makes it a no-op after first load.
+    """
+    _get_encoder()
+
 _SCORE_SYSTEM = (
     "You are a precise, no-nonsense technical recruiter and an ATS simulator. Given a candidate profile, "
     "a list of job postings, and their dense/sparse overlap metrics, rate how well the candidate fits "

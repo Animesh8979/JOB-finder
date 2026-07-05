@@ -6,6 +6,7 @@ in the separate ``autofill_runner`` process) so the UI stays light and thread-sa
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -82,10 +83,8 @@ def launch_assisted_apply(job: dict, resume_path: str, cover_letter: str,
         "github": links.get("github", ""),
         "website": links.get("portfolio", ""),
         "cover_letter": cover_letter or "",
-        # LLM Context for custom autofilling
+        # LLM Context for custom autofilling (model names only — NOT keys)
         "provider": config.provider(),
-        "anthropic_api_key": config.anthropic_key(),
-        "gemini_api_key": config.gemini_key(),
         "writing_model": prefs.get("writing_model", "claude-sonnet-4-6"),
         "gemini_model": prefs.get("gemini_model", "gemini-2.0-flash"),
         "job_title": job.get("title", ""),
@@ -94,15 +93,25 @@ def launch_assisted_apply(job: dict, resume_path: str, cover_letter: str,
         "profile": profile,
     }
 
-
-    cfg_path = Path(tempfile.gettempdir()) / f"jobcopilot_apply_{job.get('id','x')}.json"
-    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    # Pass API keys via environment variables (inherited by subprocess) —
+    # never via stdin where they'd sit in the JSON config payload.
+    child_env = os.environ.copy()
+    if config.anthropic_key():
+        child_env["ANTHROPIC_API_KEY"] = config.anthropic_key()
+    if config.gemini_key():
+        child_env["GEMINI_API_KEY"] = config.gemini_key()
 
     # Use the same interpreter that's running Streamlit (the venv python).
-    subprocess.Popen(
-        [sys.executable, "-m", "src.autofill_runner", str(cfg_path)],
+    process = subprocess.Popen(
+        [sys.executable, "-m", "src.autofill_runner"],
+        stdin=subprocess.PIPE,
         cwd=str(config.ROOT),
+        env=child_env,
     )
+    if process.stdin:
+        process.stdin.write(json.dumps(cfg).encode("utf-8"))
+        process.stdin.close()
+
     if cfg["gated"]:
         return "Opening the page in your browser (login-gated site — not auto-filled)."
     return "Opening a browser and pre-filling the form. Review every field, then submit yourself."

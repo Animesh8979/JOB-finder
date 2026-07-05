@@ -17,3 +17,9 @@ __pycache__/
 
 # Playwright browser auth state
 data/browser_state/
+
+# Encryption key (NEVER commit — decrypts all secrets.json values)
+data/.fernet_key
+
+# ChromaDB vector store (regenerable from job data)
+data/chroma/

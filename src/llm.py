@@ -55,39 +55,30 @@ def _claude(prompt: str, system: str, cached_context: str, model: str,
         system_blocks.append({"type": "text", "text": system})
 
     messages = [{"role": "user", "content": prompt}]
-    
-    # Check for MCP tools
-    tools = []
+
+    # --- MCP Tools (best-effort, fully silent) ---
+    tools: list[dict[str, Any]] = []
     if use_mcp_tools:
         try:
             from .mcp_client import get_available_tools, start_servers
-            # Make sure servers are started
-            try:
-                tools_def = get_available_tools()
-                if not tools_def:
-                    start_servers()
-                    tools_def = get_available_tools()
-            except Exception:
+            tools_def = get_available_tools()
+            if not tools_def:
                 start_servers()
                 tools_def = get_available_tools()
-                
-            for t in tools_def:
-                # Format to Anthropic tool schema
-                tools.append({
-                    "name": t["name"],
-                    "description": t["description"],
-                    "input_schema": t["input_schema"]
-                })
-        except Exception as e:
-            # Silently fail and continue without tools if mcp client is broken
-            print(f"Warning: Failed to load MCP tools: {e}")
+            tools = [
+                {"name": t["name"], "description": t["description"], "input_schema": t["input_schema"]}
+                for t in tools_def
+            ]
+        except Exception:
+            tools = []  # Silently continue without tools
 
-    # Tool calling loop
+    # --- Execution (with optional tool loop) ---
     MAX_TOOL_STEPS = 5
     step_count = 0
+    result = ""
     while step_count < MAX_TOOL_STEPS:
         step_count += 1
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -98,38 +89,31 @@ def _claude(prompt: str, system: str, cached_context: str, model: str,
             kwargs["tools"] = tools
 
         resp = client.messages.create(**kwargs)
-        
-        # Add the assistant's message to history
         messages.append({"role": "assistant", "content": resp.content})
-        
-        if resp.stop_reason == "tool_use":
+
+        if resp.stop_reason == "tool_use" and tools:
             from .mcp_client import call_tool
-            # Execute tools and append results
             tool_results = []
             for block in resp.content:
                 if getattr(block, "type", "") == "tool_use":
                     try:
-                        result_text = call_tool(block.name, block.input)
-                    except Exception as e:
-                        result_text = f"Error: {e}"
-                        
+                        result_text = call_tool(block.name, block.input) or ""
+                    except Exception:
+                        result_text = ""
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": result_text
+                        "content": result_text,
                     })
-            
             messages.append({"role": "user", "content": tool_results})
-            # Loop continues to send tool results back to Claude
         else:
-            # We are done
             result = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
             break
-            
-    if step_count >= MAX_TOOL_STEPS:
-        result = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
-        if not result:
-            result = "Error: Maximum tool usage steps reached."
+
+    if not result:
+        result = "".join(
+            b.text for b in resp.content if getattr(b, "type", "") == "text"
+        ).strip() or "Error: Maximum tool usage steps reached."
 
     del client
     del key
@@ -189,7 +173,7 @@ def _nvidia(prompt: str, system: str, cached_context: str, model: str,
     messages.append({"role": "user", "content": prompt})
     
     payload = {
-        "model": model or "meta/llama-3.1-70b-instruct",
+        "model": model or "meta/llama-3.1-405b-instruct",
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature

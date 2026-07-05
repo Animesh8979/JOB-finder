@@ -1,25 +1,26 @@
 """Standalone browser process for REVIEW-FIRST application auto-fill.
 
 Run as:  python -m src.autofill_runner <path-to-config.json>
-
-It opens a real, visible Chromium window, best-effort fills the obvious fields and
-uploads the resume, then waits while YOU review and click Submit. It NEVER submits and
-NEVER closes the form for you. Closing the window ends the process.
-
-Kept deliberately separate from Streamlit so Playwright's sync API runs in its own
-process (no event-loop conflicts).
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
+import re
 
+def _clean_json(text: str) -> str:
+    """Strips markdown code blocks from LLM output."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text)
+        text = re.sub(r"```$", "", text)
+    return text.strip()
 
 def _match_value(key: str, cfg: dict) -> str:
-    """Map a field's name/id/placeholder/label text to a value to fill."""
+    """Map a field's name/id/placeholder/label text to a value to fill locally."""
     k = key.lower()
-    # Never touch these.
     if any(bad in k for bad in ("company", "search", "coupon", "how did you hear",
                                 "password", "salary", "captcha", "referral code")):
         return ""
@@ -39,199 +40,262 @@ def _match_value(key: str, cfg: dict) -> str:
         return cfg.get("phone", "")
     if any(w in k for w in ("city", "location", "where are you", "current location")):
         return cfg.get("location", "")
-    if "cover" in k or "why do you want" in k or "message" in k:
-        return cfg.get("cover_letter", "")
     if "name" in k and "user" not in k and "file" not in k:
         return cfg.get("full_name", "")
     return ""
 
-
-def _get_element_label(page, el) -> str:
+def _get_element_label(frame, el) -> str:
     """Finds associated label text for an input/textarea element."""
     try:
         eid = el.get_attribute("id")
         if eid:
-            lbl = page.query_selector(f"label[for='{eid}']")
+            # Safely escape ID
+            lbl = frame.query_selector(f"label[for='{eid}']")
             if lbl:
                 return lbl.inner_text().strip()
     except Exception:
         pass
-    
-    # Try parent label
     try:
         parent = el.query_selector("xpath=ancestor::label")
         if parent:
             return parent.inner_text().strip()
     except Exception:
         pass
-        
     placeholder = el.get_attribute("placeholder")
-    if placeholder:
-        return placeholder.strip()
-        
+    if placeholder: return placeholder.strip()
     aria = el.get_attribute("aria-label")
-    if aria:
-        return aria.strip()
-        
+    if aria: return aria.strip()
     name = el.get_attribute("name")
-    if name:
-        return name.strip()
-        
+    if name: return name.strip()
     return ""
 
-
-def _generate_answer_to_question(question_text: str, cfg: dict) -> str:
-    """Uses LLM to write a custom, brief response to an application form question."""
+def _bulk_llm_fallback(frame, cfg: dict, unfilled_elements: list) -> int:
+    """Uses Gemini to bulk-map candidate profile data to unknown form fields, with retries and batching."""
     import httpx
-    
-    provider = cfg.get("provider", "claude")
-    anthropic_key = cfg.get("anthropic_api_key", "")
-    gemini_key = cfg.get("gemini_api_key", "")
-    model = cfg.get("writing_model", "claude-sonnet-4-6")
-    if provider == "gemini":
-        model = cfg.get("gemini_model", "gemini-2.0-flash")
+    # Read the key from the inherited environment (set by autofill.py), NOT the cfg dict.
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key or not unfilled_elements:
+        return 0
 
-    # Construct resume context
+    filled_count = 0
     from src.profile_parser import profile_context
-    profile = cfg.get("profile", {})
-    ctx = profile_context(profile)
+    ctx = profile_context(cfg.get("profile", {}))
 
-    prompt = (
-        f"You are applying to the following job:\n"
-        f"Title: {cfg.get('job_title', '')}\n"
-        f"Company: {cfg.get('job_company', '')}\n"
-        f"Description: {cfg.get('job_description', '')[:1200]}\n\n"
-        f"Answer this application form question truthfully using ONLY details from the candidate profile.\n"
-        f"Keep the answer concise (under 120 words), writing in the first-person ('I'). Do not exaggerate.\n\n"
-        f"QUESTION: {question_text}\n"
-        f"ANSWER:"
-    )
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    headers = {"x-goog-api-key": gemini_key, "content-type": "application/json"}
 
-    try:
-        if provider == "gemini" and gemini_key:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            headers = {
-                "x-goog-api-key": gemini_key,
-                "content-type": "application/json"
-            }
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": f"SYSTEM INSTRUCTION: You answer application questions truthfully based on the candidate's profile context:\n{ctx}\n\nUSER PROMPT:\n{prompt}"}
-                        ]
-                    }
-                ],
-                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 300}
-            }
-            resp = httpx.post(url, json=payload, headers=headers, timeout=20.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        elif provider == "claude" and anthropic_key:
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": anthropic_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            payload = {
-                "model": model,
-                "max_tokens": 300,
-                "system": f"You answer application questions truthfully based on the candidate's profile context:\n{ctx}",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
-            }
-            resp = httpx.post(url, json=payload, headers=headers, timeout=20.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                return "".join(b["text"] for b in data["content"] if b["type"] == "text").strip()
-    except Exception as e:
-        print(f"Error calling LLM for custom question: {e}")
-    return ""
+    # Batch into chunks of 30 to prevent context overflow
+    chunk_size = 30
+    for i in range(0, len(unfilled_elements), chunk_size):
+        chunk = unfilled_elements[i:i + chunk_size]
+        schema_list = [{"element_id": e["id_key"], "label": e["label"], "type": e["type"]} for e in chunk]
 
+        prompt = (
+            f"Map the candidate's profile to these form fields. Return a clean JSON dictionary where keys are 'element_id'.\n"
+            f"If 'type' is 'radio' or 'checkbox', output the boolean literal true or false.\n"
+            f"If it's a question, generate a brief (1 sentence) answer. If it doesn't apply, omit it entirely.\n"
+            f"FIELDS: {json.dumps(schema_list, indent=2)}\n\n"
+            f"PROFILE CONTEXT:\n{ctx}"
+        )
 
-def _fill(page, cfg: dict) -> int:
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
+        }
+
+        # Retry loop
+        for attempt in range(3):
+            try:
+                resp = httpx.post(url, json=payload, headers=headers, timeout=25.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_json = data["candidates"][0]["content"]["parts"][0]["text"]
+                    mapping = json.loads(_clean_json(raw_json))
+                    
+                    for el_dict in chunk:
+                        eid = el_dict["id_key"]
+                        if eid in mapping and mapping[eid] is not None:
+                            try:
+                                locator = frame.locator(el_dict["selector"]).first
+                                tag = el_dict["type"]
+                                val = mapping[eid]
+                                
+                                if tag in ("radio", "checkbox"):
+                                    if str(val).lower() == "true": locator.check()
+                                elif tag == "select":
+                                    try: locator.select_option(label=str(val))
+                                    except: locator.select_option(value=str(val))
+                                else:
+                                    locator.fill(str(val))
+                                filled_count += 1
+                            except Exception:
+                                pass
+                    break # Success, break retry loop
+            except Exception as e:
+                if attempt == 2: print(f"Bulk LLM chunk {i} failed after 3 retries: {e}")
+                time.sleep(2)
+
+    return filled_count
+
+def _fill_page(page, cfg: dict) -> int:
     filled = 0
-    
-    # Gather all frames (including main page and iframes like Greenhouse/Lever)
     frames = [page.main_frame] + page.main_frame.child_frames
 
     for frame in frames:
-        # 1) Resume upload — set every file input we can find.
+        # 1. Multi-File Upload Fix: Target resume specifically
         if cfg.get("resume_path"):
-            for inp in frame.query_selector_all("input[type=file]"):
+            # Only upload if the label implies resume/cv
+            for inp in frame.locator('*css=input[type="file"]').all():
                 try:
-                    inp.set_input_files(cfg["resume_path"])
-                    filled += 1
+                    lbl = _get_element_label(frame, inp).lower()
+                    if "resume" in lbl or "cv" in lbl or "upload" in lbl:
+                        inp.set_input_files(cfg["resume_path"])
+                        filled += 1
                 except Exception:
                     pass
 
-        # 2) Text inputs / textareas by heuristic.
-        for el in frame.query_selector_all("input, textarea"):
+        # 2. Text & Radio Inputs via Shadow-piercing locator
+        unfilled = []
+        elements = frame.locator('*css=input, textarea, select, [role="textbox"], [role="combobox"], [contenteditable="true"]').all()
+        for el in elements:
             try:
-                itype = (el.get_attribute("type") or "text").lower()
-                if itype in ("hidden", "file", "checkbox", "radio", "submit", "button", "password", "search"):
+                tag = el.evaluate("el => el.tagName").lower()
+                itype = (el.get_attribute("type") or "text").lower() if tag == "input" else tag
+                if itype in ("hidden", "file", "submit", "button", "password", "search"):
                     continue
-                if not el.is_visible():
+                
+                # Invisible bounding box fix
+                box = el.bounding_box()
+                if not box or box["width"] == 0 or box["height"] == 0:
                     continue
+
                 key = " ".join(filter(None, [
                     el.get_attribute("name"), el.get_attribute("id"),
                     el.get_attribute("placeholder"), el.get_attribute("aria-label"),
                 ]))
                 value = _match_value(key, cfg)
-                
-                # Get label text for diagnostic or LLM custom questions
                 label_text = _get_element_label(frame, el)
                 
-                if value:
-                    el.fill(value)
+                if value and itype not in ("radio", "checkbox"):
+                    if tag == "select":
+                        try: el.select_option(label=value)
+                        except: el.select_option(value=value)
+                    else:
+                        el.fill(value)
                     filled += 1
                 else:
-                    # If we don't have a heuristic match, check if it's a qualitative question
-                    tag_name = el.evaluate("el => el.tagName").lower()
-                    if tag_name == "textarea" or (tag_name == "input" and len(label_text) > 20):
-                        # Skip if already prefilled/not empty
+                    current_val = ""
+                    if itype not in ("radio", "checkbox"):
                         current_val = el.input_value()
-                        if not current_val.strip() and label_text:
-                            ai_answer = _generate_answer_to_question(label_text, cfg)
-                            if ai_answer:
-                                el.fill(ai_answer)
-                                filled += 1
+                    
+                    if not current_val.strip() and not el.is_checked():
+                        eid = el.get_attribute("id")
+                        ename = el.get_attribute("name")
+                        
+                        # Generate ultra-safe CSS selector
+                        if eid:
+                            selector = f"[id='{eid}']"
+                        elif ename:
+                            selector = f"[name='{ename}']"
+                        else:
+                            idx = len(unfilled)
+                            el.evaluate("(e, i) => e.setAttribute('data-ai-fallback', i)", str(idx))
+                            selector = f"[data-ai-fallback='{idx}']"
+                            
+                        unfilled.append({
+                            "selector": selector,
+                            "id_key": eid or ename or selector,
+                            "label": label_text,
+                            "type": itype
+                        })
             except Exception:
                 pass
                 
+        if unfilled:
+            filled += _bulk_llm_fallback(frame, cfg, unfilled)
+            
     return filled
 
-
+def _paginate_and_fill(page, cfg: dict) -> int:
+    """The End-to-End Hunter: Fills current page, finds 'Next', and repeats."""
+    total_filled = 0
+    max_pages = 8 # Prevent infinite loops
+    
+    for page_num in range(max_pages):
+        print(f"Filling Page {page_num + 1}...")
+        total_filled += _fill_page(page, cfg)
+        
+        # Hunt for a Next/Continue button
+        next_btn = None
+        for frame in [page.main_frame] + page.main_frame.child_frames:
+            try:
+                # Look for common submit/next buttons
+                btns = frame.locator('*css=button, input[type="submit"], input[type="button"], a[role="button"]').all()
+                for btn in btns:
+                    if btn.is_visible():
+                        text = btn.inner_text().strip().lower() or btn.get_attribute("value").strip().lower()
+                        if text in ("next", "continue", "save and continue", "next step"):
+                            next_btn = btn
+                            break
+            except Exception:
+                pass
+            if next_btn: break
+            
+        if next_btn:
+            print("Found 'Next' button, advancing to next page...")
+            try:
+                next_btn.click()
+                page.wait_for_timeout(3000) # Give SPA time to render next page
+            except Exception:
+                break
+        else:
+            print("Reached the end of the application (no 'Next' button found).")
+            break
+            
+    return total_filled
 
 def run(cfg: dict) -> None:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            cfg["user_data_dir"], headless=False, accept_downloads=True,
-            viewport={"width": 1300, "height": 920},
-            args=["--start-maximized"],
-        )
+        # Context locking & Stealth flags
+        args = ["--start-maximized", "--disable-blink-features=AutomationControlled"]
+        try:
+            ctx = p.chromium.launch_persistent_context(
+                cfg["user_data_dir"], headless=False, accept_downloads=True,
+                viewport={"width": 1300, "height": 920}, args=args,
+            )
+        except Exception as e:
+            print(f"Persistent context locked, falling back to ephemeral incognito context: {e}")
+            browser = p.chromium.launch(headless=False, args=args)
+            ctx = browser.new_context(viewport={"width": 1300, "height": 920})
+            
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
-            page.goto(cfg["apply_url"], wait_until="domcontentloaded", timeout=60000)
+            # Dropped networkidle for domcontentloaded to prevent 60s timeout hangs
+            page.goto(cfg["apply_url"], wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(2000) # Give SPA time to hydrate
         except Exception as e:
-            print(f"Could not open the page: {e}")
+            print(f"Could not fully load the page (continuing anyway): {e}")
 
         if cfg.get("gated"):
-            print("This is a login-gated site (e.g. LinkedIn). Not auto-filling — "
-                  "use your own logged-in session and the answer sheet to paste details.")
+            print("This is a login-gated site. Use your own logged-in session and the answer sheet.")
         else:
             try:
-                n = _fill(page, cfg)
-                print(f"Pre-filled {n} field(s). REVIEW EVERYTHING, then submit yourself.")
+                # Prefer the specialized ATS engine when the apply host matches.
+                try:
+                    from src.ats_engines import fill_with_engine
+                    used, msg = fill_with_engine(page, cfg["apply_url"], cfg)
+                    print(msg)
+                    if not used:
+                        _paginate_and_fill(page, cfg)
+                except ImportError:
+                    _paginate_and_fill(page, cfg)
+                print("Pre-filled all pages. REVIEW EVERYTHING, then submit yourself.")
             except Exception as e:
-                print(f"Auto-fill hit an issue (form may be unusual): {e}")
+                print(f"Auto-fill hit an issue: {e}")
 
         print(">>> Review and submit in the browser. Close the window when you're done. <<<")
-        # Stay alive until the user closes the browser window.
         try:
             while len(ctx.pages) > 0:
                 time.sleep(0.5)
@@ -242,20 +306,11 @@ def run(cfg: dict) -> None:
         except Exception:
             pass
 
-
 if __name__ == "__main__":
-    import os
-    if len(sys.argv) < 2:
-        print("usage: python -m src.autofill_runner <config.json>")
-        sys.exit(2)
-    cfg_file = sys.argv[1]
     try:
-        with open(cfg_file, "r", encoding="utf-8") as fh:
-            cfg = json.load(fh)
-    finally:
-        try:
-            if os.path.exists(cfg_file):
-                os.remove(cfg_file)
-        except Exception:
-            pass
+        cfg_data = sys.stdin.read()
+        cfg = json.loads(cfg_data)
+    except Exception as e:
+        print(f"Error parsing config: {e}")
+        sys.exit(2)
     run(cfg)

@@ -5,6 +5,7 @@ from typing import Any
 
 from . import adzuna, arbeitnow, base, himalayas, jobicy, remoteok, remotive
 from . import greenhouse, lever, weworkremotely, hackernews, ashby, builtin
+from . import wellfound, otta, themuse, usajobs, dice, simplyhired, careerbuilder, monster
 
 REGISTRY = {
     # --- Free public APIs (no auth needed) ---
@@ -16,6 +17,14 @@ REGISTRY = {
     "weworkremotely": weworkremotely,
     "hackernews": hackernews,
     "builtin": builtin,
+    "themuse": themuse,
+    "otta": otta,
+    "wellfound": wellfound,
+    "dice": dice,
+    "simplyhired": simplyhired,
+    "careerbuilder": careerbuilder,
+    "monster": monster,
+    "usajobs": usajobs,
     # --- Require config (API keys or company board slugs) ---
     "adzuna": adzuna,
     "greenhouse": greenhouse,

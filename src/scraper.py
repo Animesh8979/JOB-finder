@@ -15,12 +15,42 @@ from urllib.parse import urlparse, urljoin
 from curl_cffi import requests as cffi_requests
 from . import config
 
-# A basic set of headers to look like a browser
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
+# Rotating realistic browser User-Agents (updated regularly).
+# Using a pool avoids the single-fingerprint problem and keeps us current.
+_USER_AGENTS = [
+    # Chrome on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Chrome on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Firefox on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:133.0) Gecko/20100101 Firefox/133.0",
+]
+
+
+def _random_ua() -> str:
+    """Return a random realistic User-Agent string."""
+    return random.choice(_USER_AGENTS)
+
+
+def _browser_headers() -> dict[str, str]:
+    """Build a realistic browser header set with a rotating UA."""
+    return {
+        "User-Agent": _random_ua(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+    }
 
 def is_private_ip(ip_str: str) -> bool:
     try:
@@ -56,7 +86,7 @@ def _scrape_with_httpx(url: str) -> str:
         # Jina is safe because Jina's server makes the request to the target url.
         jina_url = f"https://r.jina.ai/{url}"
         proxy = config.proxy_url()
-        with httpx.Client(headers=HEADERS, timeout=15.0, follow_redirects=True, proxy=proxy if proxy else None) as client:
+        with httpx.Client(headers=_browser_headers(), timeout=15.0, follow_redirects=True, proxy=proxy if proxy else None) as client:
             resp = client.get(jina_url)
             if resp.status_code == 200 and len(resp.text) > 100:
                 return resp.text
@@ -98,8 +128,8 @@ def _playwright_worker(url: str, result_container: list[str]) -> None:
         return
     try:
         from playwright.sync_api import sync_playwright
-        from stealth_sync import stealth_sync
-        
+        from playwright_stealth import stealth_sync  # correct package name: pip install playwright-stealth
+
         with sync_playwright() as p:
             # Jitter before starting to prevent spike bans
             time.sleep(random.uniform(1.2, 3.8))
@@ -109,7 +139,10 @@ def _playwright_worker(url: str, result_container: list[str]) -> None:
             proxy_settings = {"server": proxy_url} if proxy_url else None
             browser = p.chromium.launch(headless=True, proxy=proxy_settings)
             context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent=_random_ua(),
+                locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1920, "height": 1080},
             )
             page = context.new_page()
             stealth_sync(page)
@@ -157,15 +190,15 @@ def scrape_url_text(url: str) -> str:
     text_pw = _scrape_with_playwright(url)
     if text_pw:
         return text_pw
-        
-    # 3. Firecrawl MCP Fallback (Anti-Bot Bypass)
-    from . import mcp_client
+
+    # 3. Firecrawl MCP Fallback (Anti-Bot Bypass — silent, best-effort)
     try:
+        from . import mcp_client
         fc_result = mcp_client.call_tool("firecrawl_scrape", {"url": url})
-        if fc_result and "Error" not in fc_result and "Exception" not in fc_result:
+        if fc_result and len(fc_result) > 50:
             return fc_result
-    except Exception as e:
-        print(f"Firecrawl MCP fallback failed: {e}")
+    except Exception:
+        pass
 
     # Fallback if all failed or returned very little
     if text:
@@ -321,7 +354,7 @@ def search_company_about_url(company_name: str) -> str:
     search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     proxy = config.proxy_url()
     try:
-        with httpx.Client(headers=HEADERS, timeout=10.0, proxy=proxy if proxy else None) as client:
+        with httpx.Client(headers=_browser_headers(), timeout=10.0, proxy=proxy if proxy else None) as client:
             resp = client.get(search_url)
             if resp.status_code == 200:
                 # Find all matches of /l/?uddg=...

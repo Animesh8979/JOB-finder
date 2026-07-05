@@ -52,17 +52,7 @@ class _CursorManager:
             self.conn.row_factory = None
             
         self.cur = self.conn.cursor()
-        # Application-level backoff mitigation
-        retries = 10
-        for i in range(retries):
-            try:
-                self.cur.execute("BEGIN IMMEDIATE")
-                break
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and i < retries - 1:
-                    time.sleep(random.uniform(0.05, 0.2))
-                else:
-                    raise e
+        self.cur.execute("BEGIN IMMEDIATE")
         return self.cur
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -299,15 +289,13 @@ def update_application(job_id: int, **fields: Any) -> None:
     fields["updated_at"] = _now()
     sets = ", ".join(f"{k} = ?" for k in fields)
     with _CursorManager() as cur:
-        # Atomic upsert
-        cur.execute("SELECT id FROM applications WHERE job_id = ?", (job_id,))
-        if not cur.fetchone():
-            now = _now()
-            cur.execute(
-                "INSERT INTO applications (job_id, status, created_at, updated_at) "
-                "VALUES (?, 'Saved', ?, ?)",
-                (job_id, now, now),
-            )
+        now = _now()
+        cur.execute(
+            "INSERT INTO applications (job_id, status, created_at, updated_at) "
+            "VALUES (?, 'Saved', ?, ?) "
+            "ON CONFLICT(job_id) DO NOTHING",
+            (job_id, now, now),
+        )
         cur.execute(
             f"UPDATE applications SET {sets} WHERE job_id = ?",
             (*fields.values(), job_id),
