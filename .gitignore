@@ -4,6 +4,8 @@ data/secrets.json
 data/profile.json
 data/preferences.json
 data/jobfinder.db
+data/jobfinder.db-shm
+data/jobfinder.db-wal
 data/resume_source.*
 data/outputs/
 
