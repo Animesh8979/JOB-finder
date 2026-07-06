@@ -3,10 +3,8 @@
 Ensures a 0% hallucination rate on cover letters and tailored resumes by 
 explicitly verifying every generated claim against the original raw resume text.
 """
-import re
 from typing import Any
 from . import llm
-from .profile_parser import profile_context
 
 def verify_cover_letter_claims(cover_letter_text: str, profile: dict[str, Any], prefs: dict[str, Any]) -> str:
     """Verifies a cover letter against the candidate's profile.

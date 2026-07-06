@@ -1,0 +1,34 @@
+target-version = "py311"
+line-length = 100
+
+# Don't lint:
+# - data/: user state files (json, sqlite)
+# - frontend/: TypeScript lives there
+# - tests/smoke_* / tests/manual_*: slow, env-dependent
+extend-exclude = [
+    "data",
+    "frontend",
+    "graphify-out",
+    ".venv",
+    "build",
+    "dist",
+]
+
+[lint]
+# Pre-existing tech debt: keep lint advisory instead of blocking. The tests
+# gate build correctness; lint is informational in CI. New code is expected
+# to be clean via the per-file-ignores below + the project guidance.
+# Future tightening: drop the historical-file ignores once those files are
+# cleaned up in a dedicated PR.
+per-file-ignores = {
+    "src/ui/*" = ["E722", "E701", "F401"],
+    "src/job_discovery.py" = ["E722", "E701", "F841"],
+    "src/llm.py" = ["E722", "E701"],
+    "src/aggregate.py" = ["E722", "E701"],
+    "src/autofill_runner.py" = ["E722", "E701"],
+    "src/documents.py" = ["F601"],
+    "src/matcher.py" = ["E402"],
+    "app.py" = ["E722", "E701", "E402"],
+    "server.py" = ["E722", "E701", "E402", "F601"],
+    "src/sources/aggregate.py" = ["E722", "E701"],
+}

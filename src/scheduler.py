@@ -6,7 +6,6 @@ Reads preferences, runs aggregate fetching, scores jobs with AI, and logs the ex
 from __future__ import annotations
 
 import datetime
-from pathlib import Path
 from src import config, db, matcher
 from src.sources import aggregate
 

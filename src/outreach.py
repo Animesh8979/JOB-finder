@@ -6,7 +6,6 @@ mail client). Compliance guardrails: real identity, an opt-out line, and a daily
 from __future__ import annotations
 
 from email.message import EmailMessage
-from typing import Any
 
 from . import config, db, llm
 from .documents import slugify

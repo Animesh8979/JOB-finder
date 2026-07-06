@@ -98,7 +98,7 @@ def run_auto_apply_task(job_id: int):
         
     profile = config.load_profile()
     if not profile:
-        print(f"[Auto-Apply Queue] Profile not configured. Cannot auto-apply.")
+        print("[Auto-Apply Queue] Profile not configured. Cannot auto-apply.")
         return
         
     from src import profile_parser

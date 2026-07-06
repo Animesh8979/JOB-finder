@@ -1,7 +1,6 @@
 """Apply page (review-first): open the form pre-filled; you review and submit."""
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
 from pathlib import Path
 

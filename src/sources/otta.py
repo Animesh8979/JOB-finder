@@ -8,7 +8,6 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from . import base
-from .client import get_json
 
 SOURCE_ID = "otta"
 ENDPOINT = "https://www.otta.com/jobs.xml"

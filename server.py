@@ -1,22 +1,21 @@
 """FastAPI backend server for Job Application Copilot."""
 from __future__ import annotations
 
-import os
 import time
 import json
 import threading
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from urllib.parse import urlparse
 
-from src import config, db, profile_parser, scraper, matcher, insights, tailor, outreach, contacts_enricher
+from src import config, db, profile_parser, scraper, matcher, insights, tailor, contacts_enricher
 
 # Initialize Database
 db.init_db()

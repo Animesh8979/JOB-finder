@@ -1,7 +1,6 @@
 """Tracker page: every saved job, its status, and follow-up reminders."""
 from __future__ import annotations
 
-from collections import Counter
 from datetime import date
 
 import pandas as pd
