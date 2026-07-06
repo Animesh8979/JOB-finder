@@ -171,6 +171,11 @@ class DiscoverPayload(BaseModel):
 
 # --- API Endpoints ---
 
+@app.get("/health")
+def health():
+    """Liveness probe used by Docker HEALTHCHECK and k8s liveness."""
+    return {"status": "ok"}
+
 @app.get("/api/status")
 def get_status():
     """Get candidate configuration readiness checks."""

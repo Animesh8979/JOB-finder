@@ -3,7 +3,6 @@ Autonomous Auto-Apply Engine leveraging Playwright over CDP to a local Edge brow
 This allows the bot to use the user's active session, bypassing login and bot challenges.
 """
 import logging
-import asyncio
 import re
 from typing import Dict, Any
 
@@ -12,7 +11,7 @@ try:
 except ImportError:
     pass  # Will be caught when function is called if not installed
 
-from src import llm, db, config
+from src import llm, config
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ _SAFE_SELECTOR_RE = re.compile(
     # more selector chars; allows attribute brackets with =, quotes (both
     # single and double), digits, letters. This is the standard CSS3 attribute
     # predicate alphabet.
-    r"^[#.A-Za-z\[\*][\w\-\[\]\(\)\"'\=\^\$\*|~, .#:>+]*$"
+    r"^[#.A-Za-z\[\*][\w\-\[\]\(\)\"'\=\^\$\*|~, .#:>+]*$"  # noqa: E501
 )
 _FORBIDDEN_SELECTOR_PIECES = (
     "javascript:", "data:", "vbscript:", "file:",
@@ -74,7 +73,6 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
     logger.info(f"Initiating Auto-Apply sequence for: {job_url}")
     
     try:
-        import os
         import html2text
         from contextlib import asynccontextmanager
 
@@ -227,7 +225,7 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
                 
                 return {
                     "status": "success",
-                    "message": f"Auto-apply sequence completed via LLM execution loop.",
+                    "message": "Auto-apply sequence completed via LLM execution loop.",
                     "snapshot_length": len(minified_markdown)
                 }
             finally:

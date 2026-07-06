@@ -11,7 +11,8 @@ import socket
 import ipaddress
 import random
 import time
-from urllib.parse import urlparse, urljoin
+from typing import Any
+from urllib.parse import urlparse
 from curl_cffi import requests as cffi_requests
 from . import config
 
@@ -222,7 +223,6 @@ def parse_job_from_text(text: str, url: str) -> dict[str, Any]:
     """Uses LLM to extract structured job posting details from raw scraped text."""
     from . import llm
     from .sources.base import normalize
-    from typing import Any
 
     prompt = (
         "Extract details from this scraped job posting text into JSON.\n\n"
