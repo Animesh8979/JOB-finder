@@ -4,8 +4,39 @@ interface FetchOptions extends RequestInit {
   showToastOnError?: boolean;
 }
 
+/** Pull a cookie value by name (handles the documented `name=value; name2=value2` shape). */
+export function getCookie(name: string): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const target = `${name}=`;
+  for (const part of document.cookie.split(';')) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(target)) {
+      return decodeURIComponent(trimmed.slice(target.length));
+    }
+  }
+  return undefined;
+}
+
 export const apiFetch = async (url: string, options: FetchOptions = {}) => {
   const { showToastOnError = true, ...fetchOptions } = options;
+
+  // Make sure we always include credentials so any csrftoken cookie round-trips.
+  fetchOptions.credentials = fetchOptions.credentials ?? 'same-origin';
+
+  // For state-mutating methods, echo the csrftoken cookie as a header IF the
+  // backend has been configured to issue one. The cookie is set by the first
+  // GET response automatically. Older backend builds may not set it — in that
+  // case the header is omitted and the request still succeeds locally.
+  const method = (fetchOptions.method ?? 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const token = getCookie('csrftoken');
+    if (token) {
+      fetchOptions.headers = {
+        ...(fetchOptions.headers ?? {}),
+        'X-CSRF-Token': token,
+      };
+    }
+  }
 
   try {
     const response = await fetch(url, fetchOptions);

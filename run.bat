@@ -2,6 +2,9 @@
 cd /d "%~dp0"
 set "VPY=.venv\Scripts\python.exe"
 
+REM Disk discipline: re-source env vars so a "run without setup" still anchors caches on D:.
+call "%~dp0_env_d_disk.bat"
+
 if not exist "%VPY%" (
   echo It looks like setup hasn't run yet. Running setup first...
   call setup.bat

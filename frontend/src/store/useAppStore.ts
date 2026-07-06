@@ -1,6 +1,13 @@
-import type { Profile, Preferences, Secrets } from '../types';
+import type { Profile, Preferences, Secrets, RecruiterScoreReport } from '../types';
 import { create } from 'zustand';
 import { apiFetch } from '../utils/api';
+
+interface RecruiterScoreState {
+  loading: boolean;
+  loaded: boolean;
+  error?: string;
+  data?: RecruiterScoreReport;
+}
 
 interface AppState {
   readiness: {
@@ -12,12 +19,15 @@ interface AppState {
   prefs: Preferences | null;
   secrets: Secrets | null;
   isLoading: boolean;
+  recruiterScore: RecruiterScoreState;
   
   checkReadiness: () => Promise<void>;
   fetchProfile: () => Promise<void>;
   fetchPrefs: () => Promise<void>;
+  fetchRecruiterScore: () => Promise<void>;
   updateProfile: (profile: Profile) => void;
   updatePrefs: (prefs: Preferences, secrets?: Secrets) => void;
+  setRecruiterScore: (state: Partial<RecruiterScoreState>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -32,6 +42,7 @@ export const useAppStore = create<AppState>((set) => ({
     proxycurl_api_key: ''
   },
   isLoading: false,
+  recruiterScore: { loading: false, loaded: false },
 
   checkReadiness: async () => {
     // Skip if page is not visible
@@ -66,6 +77,21 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  updateProfile: (profile) => set({ profile }),
-  updatePrefs: (prefs, secrets) => set({ prefs, secrets })
+  updateProfile: (profile) => set({ profile, recruiterScore: { loading: false, loaded: false } }),
+  updatePrefs: (prefs, secrets) => set({ prefs, secrets }),
+
+  fetchRecruiterScore: async () => {
+    set((s) => ({ recruiterScore: { ...s.recruiterScore, loading: true, error: undefined } }));
+    try {
+      const response = await apiFetch('/api/recruiter_score', { showToastOnError: false });
+      const data: RecruiterScoreReport = await response.json();
+      set({ recruiterScore: { loading: false, loaded: true, data } });
+    } catch (e: any) {
+      set((s) => ({
+        recruiterScore: { ...s.recruiterScore, loading: false, loaded: true, error: String(e?.message || e) },
+      }));
+    }
+  },
+
+  setRecruiterScore: (state) => set((s) => ({ recruiterScore: { ...s.recruiterScore, ...state } }))
 }));

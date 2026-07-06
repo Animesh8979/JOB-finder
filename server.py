@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from urllib.parse import urlparse
 
 from src import config, db, profile_parser, scraper, matcher, insights, tailor, contacts_enricher
+from src.recruiter_score import score as recruiter_score, ScoreReport as _RecruiterScoreReport
 
 # Initialize Database
 db.init_db()
@@ -93,17 +94,30 @@ app.add_middleware(
 async def strict_localhost_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
-    
+
     # Require origin or referer for state mutating methods
     if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
         if not origin and not referer:
             return JSONResponse(status_code=403, content={"detail": "Cross-Site Request Forbidden by Anti-CSRF policy: Missing Origin/Referer."})
-            
-    for val in filter(None, [origin, referer]):
-        netloc = urlparse(val).netloc.lower()
-        if netloc not in ("127.0.0.1:5173", "localhost:5173", "127.0.0.1:8000", "localhost:8000", "127.0.0.1", "localhost"):
-            return JSONResponse(status_code=403, content={"detail": "Cross-Site Request Forbidden by Anti-CSRF policy."})
-            
+
+        # Same-site request: origin OR referer must pinpoint a permitted local
+        # origin AND it must include an explicit port. Bare "http://localhost"
+        # or "http://127.0.0.1" without a port is rejected — anything we serve
+        # binds a port. This blocks crafted pages on an unexpected host header.
+        valid_local_port = {"5173", "8000", "3000"}  # dev + prod defaults
+        matched = False
+        for val in filter(None, [origin, referer]):
+            try:
+                netloc = urlparse(val).netloc.lower()
+            except ValueError:
+                continue
+            if ":" in netloc:
+                host, _, port = netloc.rpartition(":")
+                if host in ("127.0.0.1", "localhost") and port in valid_local_port:
+                    matched = True
+        if not matched:
+            return JSONResponse(status_code=403, content={"detail": "Cross-Site Request Forbidden by Anti-CSRF policy: Origin/Referer not on a permitted local port."})
+
     return await call_next(request)
 
 # --- Schemas ---
@@ -216,6 +230,31 @@ async def upload_resume(file: UploadFile = File(...)):
         return {"status": "success", "profile": parsed}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/recruiter_score")
+def get_recruiter_score():
+    """Rule-based, zero-LLM resume-self-evaluator.
+
+    Inspired by HackerRank's open-source hiring-agent scoring taxonomy
+    (github.com/interviewstreet/hiring-agent). Re-implemented locally as a
+    deterministic rule-based scorer — does NOT call an LLM, does NOT copy
+    upstream source. Returns category totals, capped bonus/deduction, and
+    a per-rule rationale the candidate can read.
+    """
+    prof = config.load_profile() or {}
+    raw = prof.get("raw_text") or ""
+    links = prof.get("links") or {}
+    handle = None
+    if isinstance(links, dict):
+        gh_url = links.get("github") or ""
+        m = __import__("re").search(r"github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38})", gh_url)
+        if m:
+            handle = m.group(1)
+    skills = prof.get("skills") or []
+    if isinstance(skills, str):
+        skills = [s.strip() for s in skills.split(",") if s.strip()]
+    report = recruiter_score(raw, github_handle=handle, skills=skills)
+    return report.to_dict()
 
 @app.get("/api/profiles")
 def list_profiles():

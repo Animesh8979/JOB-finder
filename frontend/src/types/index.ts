@@ -53,12 +53,21 @@ export interface Preferences {
   };
 }
 
-export interface Secrets {
-  anthropic_api_key?: string;
-  gemini_api_key?: string;
-  nvidia_api_key?: string;
-  apify_api_token?: string;
-  proxycurl_api_key?: string;
+export interface ScoreRule {
+  category: string;
+  rule: string;
+  delta: number;
+  note: string;
+}
+
+export interface RecruiterScoreReport {
+  total: number;
+  by_category: Record<string, number>;
+  bonus: number;
+  deduction: number;
+  rationale: ScoreRule[];
+  inspirations: string[];
+  inspirer: string;
 }
 
 export interface Contact {

@@ -5,6 +5,7 @@ import { Upload, Key, User, FileText, CheckCircle, AlertCircle, RefreshCw, Edit3
 import { motion } from 'framer-motion';
 import type { Variants } from 'framer-motion';
 import ResumeEditor from '../components/ResumeEditor';
+import RecruiterScoreCard from '../components/RecruiterScoreCard';
 import { useAppStore } from '../store/useAppStore';
 import { apiFetch } from '../utils/api';
 
@@ -154,6 +155,15 @@ export default function Setup({ onStatusChange }: SetupProps) {
         }`}>
           {message.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
           <span className="text-sm font-medium">{message.text}</span>
+        </motion.div>
+      )}
+
+      {/* Recruiter Score — inspired by interviewstreet/hiring-agent. Loaded
+          once via Zustand; rule-based, zero LLM cost.
+          Hidden until a resume is parsed so the score is meaningful. */}
+      {profile && (
+        <motion.div variants={itemVariants}>
+          <RecruiterScoreCard hero />
         </motion.div>
       )}
 

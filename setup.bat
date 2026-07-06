@@ -5,6 +5,11 @@ echo    Job Application Copilot  -  Setup
 echo ============================================
 echo.
 
+REM --- 0) Disk discipline: keep ALL caches on D: (user constraint: no C disk) ---
+call "%~dp0_env_d_disk.bat"
+echo Cache roots anchored on D: drive (see _env_d_disk.bat for the full list).
+echo.
+
 set "PYDIR=%LOCALAPPDATA%\Programs\Python\Python312"
 set "SYSPY=%PYDIR%\python.exe"
 

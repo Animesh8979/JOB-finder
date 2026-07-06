@@ -2,9 +2,17 @@
 
 Scoring is batched (several jobs per request) and uses the profile as *cached* context,
 so scoring a whole page of results stays fast and costs very little.
+
+Embedder model is configurable via the `JOB_FINDER_EMBEDDER` env var (overrides the default).
+Approved drop-in models (all 384-dim — no DB migration needed between them):
+    - "all-MiniLM-L6-v2"   (default, 33M params, ~130MB on disk, MTEB ~56)
+    - "BAAI/bge-small-en-v1.5"  (33.4M, ~130MB, MTEB 62.17 — better recall, Apache-2.0)
+Any other model must produce 384-dim vectors, OR a collection-name bump is required.
+Set `JOB_FINDER_EMBEDDER=BAAI/bge-small-en-v1.5` in setup.bat to opt in.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 import threading
 import numpy as np
@@ -14,6 +22,38 @@ from sklearn.feature_extraction.text import CountVectorizer
 from . import llm
 from .profile_parser import profile_context
 
+# Configurable embedder. Default stays MiniLM to keep existing ChromaDB embeddings
+# numerically valid; opt-in to bge-small via env for better recall on next full re-score.
+_DEFAULT_EMBEDDER = "all-MiniLM-L6-v2"
+EMBEDDER_NAME = os.environ.get("JOB_FINDER_EMBEDDER") or _DEFAULT_EMBEDDER
+
+# Known-good 384-dim models. We refuse to bootstrap any other model unless the user
+# overrides this allowlist — protects the hardcoded `np.zeros(...)` fallbacks below.
+_384_DIM_ALLOWLIST = {
+    "all-MiniLM-L6-v2",
+    "BAAI/bge-small-en-v1.5",
+    "sentence-transformers/all-MiniLM-L6-v2",
+    "sentence-transformers/bge-small-en-v1.5",
+}
+if EMBEDDER_NAME not in _384_DIM_ALLOWLIST:
+    # Defensive: unknown model -> keep MiniLM, log to stderr (no crash, no surprise).
+    import sys
+    print(
+        f"[matcher] WARNING: unknown embedder '{EMBEDDER_NAME}' — falling back to "
+        f"{_DEFAULT_EMBEDDER}. Set JOB_FINDER_EMBEDDER to a 384-dim model.",
+        file=sys.stderr,
+    )
+    EMBEDDER_NAME = _DEFAULT_EMBEDDER
+
+# Vector dimension used for the `np.zeros(_EMBED_DIM)` fallbacks when encoding fails.
+# All allowlisted models produce 384-dim embeddings.
+_EMBED_DIM = 384
+
+# Chroma collection suffix — bumped when we change embedder so we don't mix
+# incompatible vector spaces in the same collection.
+# Recent commit history: MiniLM = "jobs" (legacy). bge = "jobs_bge" (new space).
+_COLLECTION_NAME = "jobs" if EMBEDDER_NAME == _DEFAULT_EMBEDDER else "jobs_bge"
+
 _encoder_lock = threading.Lock()
 _encoder_instance = None
 
@@ -21,7 +61,7 @@ def _get_encoder() -> SentenceTransformer:
     global _encoder_instance
     with _encoder_lock:
         if _encoder_instance is None:
-            _encoder_instance = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+            _encoder_instance = SentenceTransformer(EMBEDDER_NAME, device="cpu")
     return _encoder_instance
 
 
@@ -63,7 +103,7 @@ def get_chroma():
 
 def get_collection():
     client = get_chroma()
-    return client.get_or_create_collection(name="jobs")
+    return client.get_or_create_collection(name=_COLLECTION_NAME)
 
 def _ensure_embeddings(jobs: list[dict[str, Any]]):
     """Ensure all jobs have embeddings in ChromaDB."""
@@ -105,7 +145,7 @@ def pre_filter_jobs(
         encoder = _get_encoder()
         profile_vec = encoder.encode([ctx])[0]
     except Exception:
-        profile_vec = np.zeros(384)
+        profile_vec = np.zeros(_EMBED_DIM)
         
     _ensure_embeddings(jobs)
     collection = get_collection()
@@ -125,7 +165,7 @@ def pre_filter_jobs(
     for job in jobs:
         jvec = emb_dict.get(str(job["id"]))
         if jvec is None:
-            jvec = np.zeros(384)
+            jvec = np.zeros(_EMBED_DIM)
             
         norm_j = np.linalg.norm(jvec)
         sim = float(np.dot(profile_vec, jvec) / (norm_p * norm_j + 1e-9)) if norm_p > 0 and norm_j > 0 else 0.0
@@ -171,7 +211,7 @@ def score_jobs(
             encoder = _get_encoder()
             profile_embed = encoder.encode([ctx])[0]
         except Exception:
-            profile_embed = np.zeros(384)
+            profile_embed = np.zeros(_EMBED_DIM)
             
         batch_ids = [str(j["id"]) for j in batch]
         embeddings_data = collection.get(ids=batch_ids, include=["embeddings"])
@@ -197,7 +237,7 @@ def score_jobs(
             try:
                 job_embed = emb_dict.get(str(job["id"]))
                 if job_embed is None:
-                    job_embed = np.zeros(384)
+                    job_embed = np.zeros(_EMBED_DIM)
                 
                 norm_p = np.linalg.norm(profile_embed)
                 norm_j = np.linalg.norm(job_embed)
