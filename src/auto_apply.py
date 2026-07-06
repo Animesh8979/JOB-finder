@@ -4,6 +4,7 @@ This allows the bot to use the user's active session, bypassing login and bot ch
 """
 import logging
 import asyncio
+import re
 from typing import Dict, Any
 
 try:
@@ -14,6 +15,56 @@ except ImportError:
 from src import llm, db, config
 
 logger = logging.getLogger(__name__)
+
+# --- Prompt-injection defense ---
+# Selectors returned by the LLM (over attacker-influenced DOM) are passed to
+# Playwright. Without an allowlist, a malicious page could craft hidden HTML
+# whose id is `javascript:...` or a Playwright engine-internal locator. We
+# whitelist the safe CSS selector shapes and explicitly block:
+#  - javascript: / data: / file: URI prefixes
+#  - Playwright's "internal" text= / xpath= / id= engine specs
+#  - the playwright-specific chained `>>` and `:light` selectors
+#  - any IFrame / shadow-piercing noise
+# A safe CSS selector starts with one of: #id, .class, tag, or [attr]. After
+# that, the rest is a constrained CSS character set. We require the *whole*
+# selector to cleanly match — anything surprising (operators, quotes) and we
+# return None. The regex below accepts starting with #, ., a letter, or `[`.
+_SAFE_SELECTOR_RE = re.compile(
+    # Outer form: starts with #id / .class / tag / [ / *  optionally followed by
+    # more selector chars; allows attribute brackets with =, quotes (both
+    # single and double), digits, letters. This is the standard CSS3 attribute
+    # predicate alphabet.
+    r"^[#.A-Za-z\[\*][\w\-\[\]\(\)\"'\=\^\$\*|~, .#:>+]*$"
+)
+_FORBIDDEN_SELECTOR_PIECES = (
+    "javascript:", "data:", "vbscript:", "file:",
+    "internal:", "internal:control", "internal:role",
+    "internal:attr=", ">>",
+    ":light",
+)
+
+MAX_ACTIONS_PER_ITERATION = 25
+MAX_TOTAL_ACTIONS = 75
+MAX_FIELD_LENGTH = 500
+
+
+def _safe_selector(sel: str) -> str | None:
+    """Return sel if it's syntactically safe to pass to page.locator(), else None."""
+    if not isinstance(sel, str):
+        return None
+    sel = sel.strip()
+    if not sel:
+        return None
+    if len(sel) > 320:
+        return None
+    lowered = sel.lower()
+    for bad in _FORBIDDEN_SELECTOR_PIECES:
+        if bad in lowered:
+            return None
+    if not _SAFE_SELECTOR_RE.match(sel):
+        return None
+    return sel
+
 
 async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
     """
@@ -72,6 +123,7 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
                 import json
                 
                 max_iterations = 3
+                total_actions = 0
                 for iteration in range(max_iterations):
                     page_content = await page.content()
                     soup = BeautifulSoup(page_content, 'html.parser')
@@ -116,19 +168,34 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
                         logger.info("LLM determined no further actions are needed.")
                         break
                         
-                    logger.info(f"Iteration {iteration+1}: Executing {len(actions)} actions from LLM.")
-                    
+                    logger.info(f"Iteration {iteration+1}: Got {len(actions)} candidate actions from LLM; validating.")
+
                     executed_any = False
-                    for action in actions:
+                    actions_this_iter = 0
+                    for action in actions[:MAX_ACTIONS_PER_ITERATION]:
+                        if total_actions >= MAX_TOTAL_ACTIONS:
+                            logger.warning("Hit MAX_TOTAL_ACTIONS safety cap; aborting further fills.")
+                            break
                         try:
                             act = action.get('action')
                             sel = action.get('selector')
                             val = action.get('value')
-                            
-                            if not sel: continue
-                            
-                            locator = page.locator(sel).first
-                            
+
+                            if act not in ('fill', 'click', 'select'):
+                                continue
+                            safe = _safe_selector(sel or '')
+                            if not safe:
+                                logger.warning(f"Rejecting unsafe selector from LLM: {sel!r}")
+                                continue
+
+                            # Cap value length to prevent gigabyte paste attacks
+                            if isinstance(val, str) and len(val) > MAX_FIELD_LENGTH:
+                                val = val[:MAX_FIELD_LENGTH]
+                            elif not isinstance(val, str) and val is not None:
+                                val = str(val)[:MAX_FIELD_LENGTH]
+
+                            locator = page.locator(safe).first
+
                             if act == 'fill' and val:
                                 await locator.fill(val)
                                 executed_any = True
@@ -139,7 +206,9 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
                                 await locator.click()
                                 executed_any = True
                                 # Wait for potential navigation
-                                await page.wait_for_timeout(2000) 
+                                await page.wait_for_timeout(2000)
+                            total_actions += 1
+                            actions_this_iter += 1
                         except Exception as e:
                             logger.warning(f"Failed to execute action {action}: {e}")
                             

@@ -8,6 +8,7 @@ import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
+from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,32 +21,60 @@ from src import config, db, profile_parser, scraper, matcher, insights, tailor, 
 # Initialize Database
 db.init_db()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle hook.
+
+    On startup: eagerly load the SentenceTransformer embedding model in a background
+    thread so the first job-scoring request isn't blocked for 5-10 seconds.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    # Run the heavy model load in a thread pool so we don't block server startup.
+    loop.run_in_executor(None, matcher.preload_encoder)
+    yield
+
+
 class RateLimiter:
     def __init__(self, limit: int, window: int):
         self.limit = limit
         self.window = window
         self.history = defaultdict(list)
         self.lock = threading.Lock()
+        self.last_cleanup = time.time()
+
+    def _cleanup(self, now: float):
+        if now - self.last_cleanup > self.window:
+            cutoff = now - self.window
+            for ip in list(self.history.keys()):
+                self.history[ip] = [t for t in self.history[ip] if t > cutoff]
+                if not self.history[ip]:
+                    del self.history[ip]
+            self.last_cleanup = now
 
     def __call__(self, request: Request):
-        client_ip = request.client.host if request.client else "127.0.0.1"
+        # Trust X-Forwarded-For if available (assuming behind a trusted proxy)
+        forwarded = request.headers.get("x-forwarded-for")
+        client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "127.0.0.1")
         now = time.time()
         cutoff = now - self.window
-        
+
         with self.lock:
-            # Clean history
+            self._cleanup(now)
             self.history[client_ip] = [t for t in self.history[client_ip] if t > cutoff]
-            
+
             if len(self.history[client_ip]) >= self.limit:
                 raise HTTPException(
-                    status_code=429, 
+                    status_code=429,
                     detail=f"Too many requests. Limit is {self.limit} requests per {self.window} seconds."
                 )
             self.history[client_ip].append(now)
 
+
 ai_limiter = RateLimiter(limit=15, window=60)
 
-app = FastAPI(title="Job Application Copilot API", version="1.0.0")
+app = FastAPI(title="Job Application Copilot API", version="1.0.0", lifespan=lifespan)
 
 # Enable CORS for development hot reloading
 app.add_middleware(
@@ -66,6 +95,11 @@ async def strict_localhost_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
     
+    # Require origin or referer for state mutating methods
+    if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+        if not origin and not referer:
+            return JSONResponse(status_code=403, content={"detail": "Cross-Site Request Forbidden by Anti-CSRF policy: Missing Origin/Referer."})
+            
     for val in filter(None, [origin, referer]):
         netloc = urlparse(val).netloc.lower()
         if netloc not in ("127.0.0.1:5173", "localhost:5173", "127.0.0.1:8000", "localhost:8000", "127.0.0.1", "localhost"):
@@ -251,7 +285,7 @@ def get_jobs(only_scored: bool = False, min_score: int = 0, search: str = ""):
     return db.list_jobs(only_scored=only_scored, min_score=min_score, search=search)
 
 @app.post("/api/jobs/scrape", dependencies=[Depends(ai_limiter)])
-def scrape_job(payload: ScrapePayload):
+async def scrape_job(payload: ScrapePayload):
     """Scrape single job URL and extract details with LLM."""
     try:
         text = scraper.scrape_url_text(payload.url)
@@ -273,7 +307,7 @@ def scrape_job(payload: ScrapePayload):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/jobs/discover")
-def discover_jobs(payload: DiscoverPayload):
+async def discover_jobs(payload: DiscoverPayload):
     """Headless bulk discovery via JobSpy."""
     try:
         from src import job_discovery
@@ -287,7 +321,7 @@ def discover_jobs(payload: DiscoverPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/jobs/{job_id}/auto-apply")
-def auto_apply(job_id: int):
+async def auto_apply(job_id: int):
     """Queue the local Edge Playwright auto-apply bot in the background."""
     from src.tasks import run_auto_apply_task
     run_auto_apply_task(job_id)
@@ -305,7 +339,7 @@ class ManualIngestPayload(BaseModel):
     html: str
 
 @app.post("/api/jobs/manual-ingest", dependencies=[Depends(ai_limiter)])
-def manual_ingest_job(payload: ManualIngestPayload):
+async def manual_ingest_job(payload: ManualIngestPayload):
     """Ingest job HTML directly from browser extension to bypass bot protections."""
     try:
         from bs4 import BeautifulSoup
@@ -339,7 +373,7 @@ def trigger_apify_scrape(payload: ApifyPayload):
     return {"status": "success", "message": "Apify scraper queued in Huey."}
 
 @app.post("/api/jobs/{id}/score", dependencies=[Depends(ai_limiter)])
-def score_single_job(id: int):
+async def score_single_job(id: int):
     """Request AI match scoring on a single job posting."""
     job = db.get_job(id)
     if not job:
@@ -416,7 +450,7 @@ def update_application_status(job_id: int, payload: AppUpdatePayload):
     return {"status": "success"}
 
 @app.post("/api/applications/{job_id}/tailor", dependencies=[Depends(ai_limiter)])
-def tailor_documents(job_id: int, payload: TailorPayload):
+async def tailor_documents(job_id: int, payload: TailorPayload):
     """Run LLM cover letter and resume tailoring, saving files on disk."""
     job = db.get_job(job_id)
     profile = config.load_profile()
@@ -458,7 +492,7 @@ def tailor_documents(job_id: int, payload: TailorPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/applications/{job_id}/ats-check", dependencies=[Depends(ai_limiter)])
-def run_ats_check(job_id: int):
+async def run_ats_check(job_id: int):
     """Run simulated ATS check on current tailored resume or default profile vs job description."""
     job = db.get_job(job_id)
     if not job:
@@ -484,7 +518,7 @@ def run_ats_check(job_id: int):
 
 
 @app.post("/api/applications/{job_id}/improve-bullets", dependencies=[Depends(ai_limiter)])
-def run_improve_bullets(job_id: int):
+async def run_improve_bullets(job_id: int):
     """Suggest rephrasings for resume bullet points based on the job description."""
     job = db.get_job(job_id)
     if not job:
@@ -503,7 +537,7 @@ def run_improve_bullets(job_id: int):
 
 
 @app.get("/api/files/download")
-def download_file(path: str):
+async def download_file(path: str):
     """Secure local file downloading endpoint."""
     resolved_path = Path(path).resolve()
     resolved_outputs = Path(config.OUTPUTS_DIR).resolve()
@@ -511,9 +545,7 @@ def download_file(path: str):
     try:
         resolved_path = resolved_path.resolve(strict=False)
         resolved_outputs = resolved_outputs.resolve(strict=False)
-        # Ensure the resolved path string strictly starts with the resolved outputs directory
-        if not str(resolved_path).startswith(str(resolved_outputs)):
-            raise ValueError("Path traversal attempt")
+        # Ensure the resolved path strictly sits under the outputs directory securely
         resolved_path.relative_to(resolved_outputs)
     except ValueError:
         raise HTTPException(status_code=403, detail="Unauthorized file access.")
@@ -524,7 +556,7 @@ def download_file(path: str):
     return FileResponse(str(resolved_path), filename=resolved_path.name)
 
 @app.post("/api/applications/{job_id}/apply")
-def trigger_playwright_apply(job_id: int):
+async def trigger_playwright_apply(job_id: int):
     """Launch Playwright browser assistant for review-first pre-filling."""
     job = db.get_job(job_id)
     app = db.get_application(job_id)

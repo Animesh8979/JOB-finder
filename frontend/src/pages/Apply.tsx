@@ -6,8 +6,8 @@ import { Play, Info, Copy, ClipboardCheck, AlertTriangle, AlertCircle, FileCheck
 export default function Apply() {
   const [apps, setApps] = useState<Application[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  const [appDetail, setAppDetail] = useState<Application | Job | null>(null);
-  const [jobDetail, setJobDetail] = useState<Application | Job | null>(null);
+  const [appDetail, setAppDetail] = useState<Application | null>(null);
+  const [jobDetail, setJobDetail] = useState<Job | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);

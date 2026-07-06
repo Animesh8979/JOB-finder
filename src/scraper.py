@@ -60,24 +60,35 @@ def is_private_ip(ip_str: str) -> bool:
         return True  # Treat invalid IPs as private/unsafe
 
 def validate_url_for_ssrf(url: str) -> str:
+    """Returns the first IP literal of the resolved hostname.
+
+    Defense: We resolve ALL addresses; if ANY is private/loopback/link-local,
+    the request is rejected. This mitigates split-horizon-DNS attacks where
+    one of the addresses returned is internal. The returned IP is intended for
+    DNS pinning — see :func:`_scrape_with_httpx` for the matching use.
+    """
     parsed = urlparse(url)
     if not parsed.scheme or parsed.scheme not in ("http", "https"):
         raise ValueError("Only http and https schemes are allowed.")
-    
+
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("Invalid URL hostname.")
-        
+
     try:
         addr_info = socket.getaddrinfo(hostname, None)
-        for family, _, _, _, sockaddr in addr_info:
-            ip = sockaddr[0]
-            if is_private_ip(ip):
-                raise ValueError("Access to private/local network ranges is prohibited.")
-        # Return the first resolved IP for DNS pinning
-        return addr_info[0][4][0]
     except socket.gaierror as e:
         raise ValueError(f"Unable to resolve hostname: {e}")
+
+    if not addr_info:
+        raise ValueError(f"No addresses resolved for {hostname}")
+
+    for family, _, _, _, sockaddr in addr_info:
+        ip = sockaddr[0]
+        if is_private_ip(ip):
+            raise ValueError(f"Access to private/local network ranges is prohibited (resolved {ip} for {hostname}).")
+
+    return addr_info[0][4][0]
 
 def _scrape_with_httpx(url: str) -> str:
     """Attempt to use Jina Reader API for perfect markdown extraction, fallback to curl_cffi."""
