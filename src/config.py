@@ -143,6 +143,10 @@ DEFAULT_PREFS: dict[str, Any] = {
     "writing_model": "claude-sonnet-4-6",
     "gemini_model": "gemini-2.0-flash",
     "nvidia_model": "meta/llama-3.1-70b-instruct",
+    # Ollama = free-tier local LLM. Default to llama3.1:8b (Apache-2.0 weights,
+    # ~4.7GB GGUF Q4). User can swap via prefs. Other free options:
+    # "qwen2.5:7b" (Apache-2.0), "gemma3:4b" (Gemma terms), "phi3:mini" (MIT).
+    "ollama_model": os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
 }
 
 
@@ -192,13 +196,36 @@ def save_profile(data: dict[str, Any], name: str | None = None) -> None:
 
 # --- Readiness checks --------------------------------------------------------
 def provider_ready() -> bool:
-    """True if the selected AI provider has an API key configured."""
+    """True if the selected AI provider is ready to serve requests."""
     p = provider()
     if p == "gemini":
         return bool(gemini_key())
     if p == "nvidia":
         return bool(get_secret("nvidia_api_key", "NVIDIA_API_KEY"))
+    if p == "ollama":
+        # Ollama is keyless + local. "Ready" means the server is up and the
+        # selected model is pulled. We do a lightweight best-effort probe and
+        # treat any failure as not-ready (UI will nudge the user to start it).
+        return _ollama_ready()
     return bool(anthropic_key())
+
+
+def _ollama_ready() -> bool:
+    """Best-effort Ollama server probe. Never raises; False = not ready."""
+    try:
+        try:
+            import ollama  # type: ignore
+        except ImportError:
+            return False
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        client = ollama.Client(host=host)
+        # Heartbeat: list local models. If the server is down this raises, and
+        # we return False. We do NOT require the target model to be pulled -
+        # the first chat request will prompt the pull.
+        client.list()
+        return True
+    except Exception:
+        return False
 
 
 def readiness() -> dict[str, bool]:

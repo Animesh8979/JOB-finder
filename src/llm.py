@@ -9,6 +9,7 @@ Why this exists:
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any
@@ -147,6 +148,61 @@ def _gemini(prompt: str, system: str, cached_context: str, model: str,
     return result
 
 
+# --- Ollama (free, local, no key) -------------------------------------------
+# Free-tier-first provider path: Ollama runs a local GGUF server on the user's
+# machine (MIT license, one-line `winget install Ollama.Ollama`). No API key,
+# no credit card, no cloud backend - the request never leaves the machine.
+# Models cache to %OLLAMA_MODELS% (redirected to D:\ollama_models by
+# _env_d_disk.bat for the "no C disk" constraint).
+def _ollama(prompt: str, system: str, cached_context: str, model: str,
+            max_tokens: int, temperature: float) -> str:
+    try:
+        import ollama
+    except ImportError as e:  # pragma: no cover
+        raise LLMError(
+            "Ollama selected but the 'ollama' package isn't installed. "
+            "Run:  pip install ollama   (and install the Ollama desktop server "
+            "from https://ollama.com - it's free and local)."
+        ) from e
+
+    # No key check - Ollama is local and keyless. We DO verify the server is up.
+    system_text = ""
+    if cached_context:
+        system_text += f"{cached_context}\n\n"
+    if system:
+        system_text += system
+
+    messages: list[dict[str, Any]] = []
+    if system_text:
+        messages.append({"role": "system", "content": system_text})
+    messages.append({"role": "user", "content": prompt})
+
+    target_model = model or "llama3.1:8b"
+    try:
+        client = ollama.Client(host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
+        resp = client.chat(
+            model=target_model,
+            messages=messages,
+            options={"temperature": temperature, "num_predict": max_tokens},
+        )
+    except ollama.ResponseError as e:  # model missing or server error
+        raise LLMError(f"Ollama error: {e.error}") from e
+    except Exception as e:  # connection refused / server not running
+        msg = str(e).lower()
+        if "connection" in msg or "refused" in msg or "winerror 10061" in msg:
+            raise LLMError(
+                "Ollama server isn't running. Start it (e.g. `ollama serve` or "
+                "launch the Ollama desktop app), then retry."
+            ) from e
+        raise LLMError(f"Failed to connect to Ollama: {e}") from e
+
+    content = resp.get("message", {}).get("content", "") if isinstance(resp, dict) else ""
+    # Newer ollama python SDK returns an object with .message.content.
+    if not content:
+        content = getattr(getattr(resp, "message", None), "content", "") or ""
+    return content.strip()
+
+
 # --- Nvidia NIM (optional) ---------------------------------------------------
 def _nvidia(prompt: str, system: str, cached_context: str, model: str,
             max_tokens: int, temperature: float) -> str:
@@ -214,6 +270,8 @@ def generate(
             model = prefs["gemini_model"]
         elif provider == "nvidia":
             model = prefs["nvidia_model"]
+        elif provider == "ollama":
+            model = prefs.get("ollama_model", "llama3.1:8b")
         else:
             model = prefs["writing_model"]
 
@@ -224,6 +282,8 @@ def generate(
                 result = _gemini(prompt, system, cached_context, model, max_tokens, temperature)
             elif provider == "nvidia":
                 result = _nvidia(prompt, system, cached_context, model, max_tokens, temperature)
+            elif provider == "ollama":
+                result = _ollama(prompt, system, cached_context, model, max_tokens, temperature)
             else:
                 result = _claude(prompt, system, cached_context, model, max_tokens, temperature, use_mcp_tools)
                 

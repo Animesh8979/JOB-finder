@@ -44,6 +44,16 @@ REM Default "" -> MiniLM. User can edit this to "BAAI/bge-small-en-v1.5"
 REM to opt in to the higher-recall reranker once HF cache has been downloaded.
 if "%JOB_FINDER_EMBEDDER%"=="" set "JOB_FINDER_EMBEDDER="
 
+REM Ollama model storage - keeps GGUF weights off C:.
+REM Ollama desktop reads OLLAMA_MODELS on startup; set it BEFORE launching the
+REM the Ollama tray app. Default to D:\ollama_models (creates on first pull).
+if "%OLLAMA_MODELS%"==""        set "OLLAMA_MODELS=D:\ollama_models"
+if not exist "%OLLAMA_MODELS%"  mkdir "%OLLAMA_MODELS%"
+REM Optional: override the default model (also settable in prefs as ollama_model).
+if "%OLLAMA_MODEL%"==""         set "OLLAMA_MODEL="
+REM Optional: override the Ollama server host (default http://127.0.0.1:11434).
+if "%OLLAMA_HOST%"==""          set "OLLAMA_HOST="
+
 if "%JOB_FINDER_DEEP_TEST%"=="1" (
   echo [env] HF_HOME=%HF_HOME%
   echo [env] TRANSFORMERS_CACHE=%TRANSFORMERS_CACHE%

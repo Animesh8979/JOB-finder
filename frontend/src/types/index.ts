@@ -41,6 +41,7 @@ export interface Profile {
 export interface Preferences {
   provider?: string;
   nvidia_model?: string;
+  ollama_model?: string;
   writing_model?: string;
   scoring_model?: string;
   outreach_daily_cap?: number;

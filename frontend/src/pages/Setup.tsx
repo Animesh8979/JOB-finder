@@ -310,6 +310,7 @@ export default function Setup({ onStatusChange }: SetupProps) {
                     <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">LLM Provider</label>
                     <select value={prefs.provider} onChange={(e) => handlePrefChange('provider', e.target.value)}
                       className="w-full bg-neutral-900 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 text-sm transition-all">
+                      <option value="ollama">Ollama (Free - Local)</option>
                       <option value="claude">Anthropic (Claude)</option>
                       <option value="gemini">Google (Gemini)</option>
                       <option value="nvidia">Nvidia NIM</option>
@@ -320,6 +321,13 @@ export default function Setup({ onStatusChange }: SetupProps) {
                       <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Nvidia Model</label>
                       <input type="text" value={prefs.nvidia_model || 'meta/llama-3.1-70b-instruct'} onChange={(e) => handlePrefChange('nvidia_model', e.target.value)}
                         className="w-full surface-panel rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 text-sm transition-all" />
+                    </div>
+                  )}
+                  {prefs.provider === 'ollama' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Ollama Model (free, local)</label>
+                      <input type="text" value={prefs.ollama_model || 'llama3.1:8b'} onChange={(e) => handlePrefChange('ollama_model', e.target.value)}
+                        className="w-full surface-panel rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 text-sm transition-all" placeholder="llama3.1:8b / qwen2.5:7b / gemma3:4b / phi3:mini" />
                     </div>
                   )}
                   <div>

@@ -14,6 +14,9 @@ cryptography>=41.0.0
 # --- AI & NLP ---
 anthropic>=0.39
 openai>=1.0.0
+# Free-tier local LLM provider (Ollama) - MIT, no key, runs fully offline.
+# Required only when user sets provider="ollama" on the Setup page.
+ollama>=0.4.0
 sentence-transformers>=2.2.2
 mcp>=1.1.2
 nest_asyncio>=1.6.0
