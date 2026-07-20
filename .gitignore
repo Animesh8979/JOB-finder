@@ -27,3 +27,9 @@ data/.fernet_key
 data/chroma/
 data/*.db-shm
 data/*.db-wal
+
+data/
+scratch/
+*.db
+*.sqlite
+test_mitigation.db
