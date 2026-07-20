@@ -1,0 +1,9 @@
+{
+  "engine": "greenhouse",
+  "allowed_fields": [
+    "first_name", "last_name", "email", "phone", "resume", "cover_letter", "linkedin", "github", "portfolio", "website",
+    "location", "address", "city", "state", "zip", "country"
+  ],
+  "allowed_actions": ["fill", "select", "check", "upload", "click", "open_next_step"],
+  "blocked_actions": ["submit", "evaluate"]
+}

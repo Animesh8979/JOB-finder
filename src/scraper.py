@@ -131,59 +131,66 @@ def _scrape_with_httpx(url: str) -> str:
     return ""
 
 
-_playwright_semaphore = threading.Semaphore(2)
+import queue
 
-def _playwright_worker(url: str, result_container: list[str]) -> None:
-    """Playwright execution running in a separate thread with stealth."""
-    if not _playwright_semaphore.acquire(timeout=20.0):
-        result_container.append("ERROR: Playwright concurrency limit reached.")
-        return
-    try:
-        from playwright.sync_api import sync_playwright
-        from playwright_stealth import stealth_sync  # correct package name: pip install playwright-stealth
+_pw_queue = queue.Queue()
+_pw_thread = None
 
-        with sync_playwright() as p:
-            # Jitter before starting to prevent spike bans
-            time.sleep(random.uniform(1.2, 3.8))
+def _pw_manager():
+    from playwright.sync_api import sync_playwright
+    from playwright_stealth import stealth_sync
+    with sync_playwright() as p:
+        proxy_url = config.proxy_url()
+        proxy_settings = {"server": proxy_url} if proxy_url else None
+        browser = p.chromium.launch(headless=True, proxy=proxy_settings)
+        while True:
+            task = _pw_queue.get()
+            if task is None:
+                break
+            url, result_container, done_event = task
             
-            # Launch headless browser
-            proxy_url = config.proxy_url()
-            proxy_settings = {"server": proxy_url} if proxy_url else None
-            browser = p.chromium.launch(headless=True, proxy=proxy_settings)
-            context = browser.new_context(
-                user_agent=_random_ua(),
-                locale="en-US",
-                timezone_id="America/New_York",
-                viewport={"width": 1920, "height": 1080},
-            )
-            page = context.new_page()
-            stealth_sync(page)
-            
-            # Wait for content to load
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            # Give JS a second to render
-            page.wait_for_timeout(2000)
-            
-            # Extract plain text from body
-            body = page.query_selector("body")
-            if body:
-                text = body.inner_text()
-                result_container.append(text)
-            
-            browser.close()
-    except Exception as e:
-        result_container.append(f"ERROR: {e}")
-    finally:
-        _playwright_semaphore.release()
+            try:
+                time.sleep(random.uniform(1.2, 3.8))
+                context = browser.new_context(
+                    user_agent=_random_ua(),
+                    locale="en-US",
+                    timezone_id="America/New_York",
+                    viewport={"width": 1920, "height": 1080},
+                )
+                page = context.new_page()
+                stealth_sync(page)
+                
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(2000)
+                
+                body = page.query_selector("body")
+                if body:
+                    result_container.append(body.inner_text())
+                context.close()
+            except Exception as e:
+                result_container.append(f"ERROR: {e}")
+            finally:
+                done_event.set()
+                _pw_queue.task_done()
 
+def _ensure_pw_thread():
+    global _pw_thread
+    if _pw_thread is None or not _pw_thread.is_alive():
+        _pw_thread = threading.Thread(target=_pw_manager, daemon=True)
+        _pw_thread.start()
 
 def _scrape_with_playwright(url: str) -> str:
-    """Launch Playwright in a new thread and wait for it to complete."""
+    """Queue the URL for the persistent Playwright thread and wait for it to complete."""
+    _ensure_pw_thread()
     results: list[str] = []
-    t = threading.Thread(target=_playwright_worker, args=(url, results))
-    t.start()
-    t.join(timeout=40.0)  # Max wait time 40s
-    if results and not results[0].startswith("ERROR:"):
+    done_event = threading.Event()
+    
+    _pw_queue.put((url, results, done_event))
+    
+    # Wait for the task to be completed (with a timeout)
+    is_done = done_event.wait(timeout=40.0)
+    
+    if is_done and results and not results[0].startswith("ERROR:"):
         return results[0].strip()
     return ""
 

@@ -5,10 +5,12 @@ import requests
 import sqlite3
 import random
 
+from src import config
+
 API_BASE = "http://127.0.0.1:8000/api"
 
 def get_db_connection():
-    return sqlite3.connect("data/jobfinder.db")
+    return sqlite3.connect(str(config.DB_PATH))
 
 def start_mining():
     print("[SYSTEM] Initiating autonomous mining cycle...")

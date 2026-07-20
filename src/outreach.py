@@ -23,11 +23,8 @@ def compliance_footer(prefs: dict) -> str:
     contact = " · ".join(b for b in (ident.get("email", ""), ident.get("phone", "")) if b)
     if contact:
         lines.append(contact)
-    if ident.get("location"):
-        lines.append(ident["location"])
-    if ident.get("physical_address"):
-        lines.append(ident["physical_address"])
-    lines.append('If you\'d rather not hear from me, reply "unsubscribe" and I won\'t contact you again.')
+    physical = ident.get("physical_address") or ident.get("location") or "[User Physical Address - Required by CAN-SPAM]"
+    lines.append(f"Office: {physical} | To unsubscribe, reply with \"STOP\" or \"unsubscribe\"")
     return "\n".join(lines)
 
 

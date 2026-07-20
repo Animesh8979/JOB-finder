@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 
 /**
  * CinematicBackground — World-class animated aurora mesh with:
@@ -12,7 +12,6 @@ export default function CinematicBackground() {
   const orb1Ref = useRef<HTMLDivElement>(null);
   const orb2Ref = useRef<HTMLDivElement>(null);
   const orb3Ref = useRef<HTMLDivElement>(null);
-  const [mouse, setMouse] = useState({ x: 0.5, y: 0.5 });
 
   useEffect(() => {
     let rafId: number;

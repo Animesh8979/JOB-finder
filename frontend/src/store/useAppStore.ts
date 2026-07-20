@@ -44,7 +44,7 @@ export const useAppStore = create<AppState>((set) => ({
   isLoading: false,
   recruiterScore: { loading: false, loaded: false },
 
-  checkReadiness: async () => {
+    checkReadiness: async () => {
     // Skip if page is not visible
     if (document.hidden) return;
     
@@ -52,7 +52,7 @@ export const useAppStore = create<AppState>((set) => ({
       const response = await apiFetch('/api/status', { showToastOnError: false });
       const data = await response.json();
       set({ readiness: data });
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to fetch readiness status:', e);
     }
   },
@@ -62,7 +62,7 @@ export const useAppStore = create<AppState>((set) => ({
       const response = await apiFetch('/api/profile', { showToastOnError: false });
       const data = await response.json();
       set({ profile: data });
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to fetch profile:', e);
     }
   },
@@ -72,7 +72,7 @@ export const useAppStore = create<AppState>((set) => ({
       const response = await apiFetch('/api/preferences', { showToastOnError: false });
       const data = await response.json();
       set({ prefs: data.prefs, secrets: data.secrets });
-    } catch (e: any) {
+    } catch (e) {
       console.error('Failed to fetch preferences:', e);
     }
   },
@@ -86,9 +86,9 @@ export const useAppStore = create<AppState>((set) => ({
       const response = await apiFetch('/api/recruiter_score', { showToastOnError: false });
       const data: RecruiterScoreReport = await response.json();
       set({ recruiterScore: { loading: false, loaded: true, data } });
-    } catch (e: any) {
+    } catch (e) {
       set((s) => ({
-        recruiterScore: { ...s.recruiterScore, loading: false, loaded: true, error: String(e?.message || e) },
+        recruiterScore: { ...s.recruiterScore, loading: false, loaded: true, error: e instanceof Error ? e.message : String(e) },
       }));
     }
   },

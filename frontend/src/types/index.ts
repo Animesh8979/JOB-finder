@@ -35,7 +35,18 @@ export interface Profile {
   email?: string;
   skills?: string[];
   years_experience?: number;
-  [key: string]: unknown;
+  experience?: Array<Record<string, string>>;
+  education?: Array<Record<string, string>>;
+  [key: string]: any; // Use any to allow dynamic assignment in forms while avoiding iterator TS errors
+}
+
+export interface Secrets {
+  anthropic_api_key?: string;
+  openai_api_key?: string;
+  gemini_api_key?: string;
+  nvidia_api_key?: string;
+  apify_api_token?: string;
+  proxycurl_api_key?: string;
 }
 
 export interface Preferences {

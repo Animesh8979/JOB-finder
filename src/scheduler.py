@@ -52,9 +52,15 @@ def main() -> None:
         try:
             scored = matcher.score_jobs(unscored, profile, prefs)
             for item in scored:
-                db.set_job_score(item["job"]["id"], item["score"], item["reason"])
+                db.set_job_score(
+                    item["job"]["id"],
+                    item["score"],
+                    item["reason"],
+                    score_breakdown=item.get("breakdown"),
+                    red_flags=item.get("red_flags"),
+                )
                 scored_count += 1
-                if item["score"] >= 8:
+                if item["score"] >= 80 or (item["score"] <= 10 and item["score"] >= 8):
                     high_match_count += 1
         except Exception as e:
             with open(log_path, "a", encoding="utf-8") as lf:

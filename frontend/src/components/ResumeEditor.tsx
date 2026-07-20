@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Profile } from '../types';
 import React, { useState } from 'react';
 import { X, Save, Plus, Trash2 } from 'lucide-react';
@@ -6,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 interface ResumeEditorProps {
   profile: Profile;
-  onSave: (updatedProfile: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onSave: (updatedProfile: Profile) => void;
   onClose: () => void;
 }
 
@@ -30,7 +29,7 @@ export default function ResumeEditor({ profile, onSave, onClose }: ResumeEditorP
     setFormData({ ...formData, [listName]: list });
   };
 
-  const addItem = (listName: string, template: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const addItem = (listName: string, template: Record<string, string>) => {
     const list = [...(formData[listName] || []), template];
     setFormData({ ...formData, [listName]: list });
   };

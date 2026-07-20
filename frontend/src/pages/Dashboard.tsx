@@ -23,6 +23,7 @@ function AnimatedCounter({ value, suffix = '' }: { value: number; suffix?: strin
       if (progress < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
   return <>{display}{suffix}</>;
 }
@@ -66,6 +67,7 @@ export default function Dashboard() {
     fetchDashboardData();
     const interval = setInterval(fetchDashboardData, 20000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const topJobs = jobs

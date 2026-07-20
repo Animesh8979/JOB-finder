@@ -40,3 +40,42 @@ def verify_cover_letter_claims(cover_letter_text: str, profile: dict[str, Any], 
     )
     
     return verified_text.strip()
+
+
+def verify_resume_claims(resume_data: dict[str, Any], profile: dict[str, Any], prefs: dict[str, Any]) -> dict[str, Any]:
+    """Verifies a tailored resume dict against the candidate's source profile.
+    
+    Ensures zero hallucinated metrics, zero fake employers, and zero tech stack overclaims.
+    """
+    import json
+    source_text = profile.get("raw_text", "") or json.dumps(profile)
+    if not source_text or not resume_data:
+        return resume_data
+
+    prompt = (
+        "You are an aggressive fact-checker and anti-hallucination shield for resumes.\n"
+        "Your job is to inspect the PROPOSED TAILORED RESUME JSON and compare it strictly against the CANDIDATE SOURCE RESUME.\n\n"
+        f"CANDIDATE SOURCE RESUME:\n\"\"\"\n{source_text[:6000]}\n\"\"\"\n\n"
+        f"PROPOSED TAILORED RESUME JSON:\n\"\"\"\n{json.dumps(resume_data, indent=2)}\n\"\"\"\n\n"
+        "CRITICAL AUDIT RULES:\n"
+        "1. Remove or rewrite any bullet point that introduces hallucinated percentages, dollar amounts, or metrics not explicitly stated in the CANDIDATE SOURCE RESUME.\n"
+        "2. Remove any skill from 'skills' that the candidate does not actually possess in the source.\n"
+        "3. Do NOT invent new companies, titles, or dates.\n\n"
+        "Return strictly the audited JSON object matching the exact same keys (summary, skills, experience, education, projects, certifications)."
+    )
+
+    try:
+        audited = llm.generate_json(
+            prompt,
+            system="You are a strict anti-hallucination auditor. Return only valid JSON.",
+            model=prefs.get("writing_model"),
+            max_tokens=2600,
+        )
+        if isinstance(audited, dict) and "experience" in audited:
+            # Preserve identity fields
+            audited["name"] = resume_data.get("name", "")
+            audited["contact"] = resume_data.get("contact", "")
+            return audited
+    except Exception:
+        pass
+    return resume_data

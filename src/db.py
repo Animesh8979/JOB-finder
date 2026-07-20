@@ -31,7 +31,7 @@ def _now() -> str:
 _local = threading.local()
 
 class _CursorManager:
-    def __init__(self, row_factory=None):
+    def __init__(self, row_factory=sqlite3.Row):
         if not hasattr(_local, "conn"):
             # We enforce auto-commit behavior (isolation_level=None) to manage transactions manually
             _local.conn = sqlite3.connect(config.DB_PATH, timeout=10.0, isolation_level=None)
@@ -88,9 +88,11 @@ def init_db() -> None:
                 posted_at     TEXT,
                 fetched_at    TEXT,
                 raw           TEXT,
-                match_score   INTEGER,
-                match_reason  TEXT,
-                scored_at     TEXT
+                match_score     INTEGER,
+                match_reason    TEXT,
+                match_breakdown TEXT,
+                red_flags       TEXT,
+                scored_at       TEXT
             );
             """
         )
@@ -142,7 +144,112 @@ def init_db() -> None:
             );
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+                run_id           TEXT PRIMARY KEY,
+                parent_run_id    TEXT,
+                kind             TEXT NOT NULL,
+                request_json     TEXT,
+                status           TEXT NOT NULL,
+                phase            TEXT,
+                progress_current INTEGER DEFAULT 0,
+                progress_total   INTEGER DEFAULT 100,
+                message          TEXT,
+                cancel_requested INTEGER DEFAULT 0,
+                heartbeat_at     TEXT,
+                result_json      TEXT,
+                idempotency_key  TEXT UNIQUE,
+                source_count     INTEGER DEFAULT 0,
+                success_count    INTEGER DEFAULT 0,
+                error_count      INTEGER DEFAULT 0,
+                started_at       TEXT,
+                finished_at      TEXT,
+                error_code       TEXT,
+                error_message    TEXT,
+                created_by       TEXT DEFAULT 'system'
+            );
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS run_events (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id         TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                level          TEXT NOT NULL,
+                message        TEXT NOT NULL,
+                metadata_json  TEXT,
+                created_at     TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_runs (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id           TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                source_id        TEXT NOT NULL,
+                status           TEXT NOT NULL,
+                latency_ms       INTEGER,
+                result_count     INTEGER DEFAULT 0,
+                error_code       TEXT,
+                error_message    TEXT,
+                rate_limit_reset TEXT,
+                created_at       TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS application_sessions (
+                session_id        TEXT PRIMARY KEY,
+                job_id            INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                run_id            TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                status            TEXT NOT NULL,
+                provider_detected TEXT,
+                lock_token        TEXT UNIQUE,
+                created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at        TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+
+        # Safe schema migrations for existing databases
+        for col, col_def in [
+            ("parent_run_id", "TEXT"),
+            ("phase", "TEXT"),
+            ("message", "TEXT"),
+            ("cancel_requested", "INTEGER DEFAULT 0"),
+            ("heartbeat_at", "TEXT"),
+            ("result_json", "TEXT"),
+            ("idempotency_key", "TEXT"),
+            ("source_count", "INTEGER DEFAULT 0"),
+            ("success_count", "INTEGER DEFAULT 0"),
+            ("error_count", "INTEGER DEFAULT 0"),
+            ("match_breakdown", "TEXT"),
+            ("red_flags", "TEXT"),
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_def};")
+            except Exception:
+                pass  # Column already exists
+
+        for col, col_def in [
+            ("match_breakdown", "TEXT"),
+            ("red_flags", "TEXT"),
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def};")
+            except Exception:
+                pass
+
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(match_score);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_apps_status ON applications(status);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_outreach_created ON outreach_log(created_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_source_runs_run_id ON source_runs(run_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_app_sessions_job_id ON application_sessions(job_id);")
+
 
 
 # --- Row helpers -------------------------------------------------------------
@@ -150,7 +257,7 @@ def _row_to_dict(row) -> dict[str, Any] | None:
     if row is None:
         return None
     d = dict(row)
-    for k in ("tags", "raw"):
+    for k in ("tags", "raw", "match_breakdown", "red_flags"):
         if k in d and isinstance(d[k], str) and d[k]:
             try:
                 d[k] = json.loads(d[k])
@@ -204,11 +311,19 @@ def upsert_job(job: dict[str, Any]) -> int:
         return int(cur.fetchone()["id"])
 
 
-def set_job_score(job_id: int, score: int, reason: str) -> None:
+def set_job_score(
+    job_id: int,
+    score: int,
+    reason: str,
+    score_breakdown: dict[str, int] | None = None,
+    red_flags: list[str] | None = None,
+) -> None:
+    breakdown_json = json.dumps(score_breakdown) if score_breakdown is not None else None
+    flags_json = json.dumps(red_flags) if red_flags is not None else None
     with _CursorManager() as cur:
         cur.execute(
-            "UPDATE jobs SET match_score = ?, match_reason = ?, scored_at = ? WHERE id = ?",
-            (int(score), reason, _now(), job_id),
+            "UPDATE jobs SET match_score = ?, match_reason = ?, match_breakdown = ?, red_flags = ?, scored_at = ? WHERE id = ?",
+            (int(score), reason, breakdown_json, flags_json, _now(), job_id),
         )
 
 
@@ -224,6 +339,7 @@ def list_jobs(
     search: str = "",
     order_by_score: bool = True,
     limit: int = 500,
+    remote_only: bool = False,
 ) -> list[dict[str, Any]]:
     q = "SELECT * FROM jobs WHERE 1=1"
     params: list[Any] = []
@@ -232,6 +348,8 @@ def list_jobs(
     if min_score:
         q += " AND COALESCE(match_score, 0) >= ?"
         params.append(min_score)
+    if remote_only:
+        q += " AND remote = 1"
     if search:
         q += " AND (title LIKE ? OR company LIKE ? OR description LIKE ?)"
         like = f"%{search}%"
@@ -383,6 +501,29 @@ def list_outreach() -> list[dict[str, Any]]:
         )
         return [dict(r) for r in cur.fetchall()]
 
+
+def get_outreach(outreach_id: int) -> dict[str, Any] | None:
+    with _CursorManager(row_factory=sqlite3.Row) as cur:
+        cur.execute("SELECT * FROM outreach_log WHERE id = ?", (outreach_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_outreach(outreach_id: int, status: str) -> None:
+    with _CursorManager() as cur:
+        sent_at = _now() if status == "sent" else None
+        if sent_at:
+            cur.execute(
+                "UPDATE outreach_log SET status = ?, sent_at = ? WHERE id = ?",
+                (status, sent_at, outreach_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE outreach_log SET status = ? WHERE id = ?",
+                (status, outreach_id),
+            )
+
+
 def application_stats() -> dict:
     """Return funnel statistics."""
     stats = {}
@@ -421,6 +562,161 @@ def application_stats() -> dict:
         stats["best_source"] = best_source_row[0] if best_source_row else "None yet"
         
     return stats
+
+# --- Runs State Machine ------------------------------------------------------
+def create_run(
+    run_id: str,
+    kind: str,
+    request_json: str = "{}",
+    parent_run_id: str | None = None,
+    idempotency_key: str | None = None
+) -> None:
+    with _CursorManager() as cur:
+        cur.execute(
+            """
+            INSERT INTO runs (run_id, kind, request_json, status, started_at, parent_run_id, idempotency_key)
+            VALUES (?, ?, ?, 'queued', datetime('now'), ?, ?)
+            """,
+            (run_id, kind, request_json, parent_run_id, idempotency_key)
+        )
+
+def update_run_status(
+    run_id: str,
+    status: str,
+    error_message: str | None = None,
+    phase: str | None = None,
+    message: str | None = None,
+    progress_current: int | None = None,
+    progress_total: int | None = None,
+    result_json: str | None = None,
+) -> None:
+    finished_at = "datetime('now')" if status in ("completed", "failed", "cancelled") else "NULL"
+    with _CursorManager() as cur:
+        updates = ["status = ?", "error_message = COALESCE(?, error_message)"]
+        params: list[Any] = [status, error_message]
+        if phase is not None:
+            updates.append("phase = ?")
+            params.append(phase)
+        if message is not None:
+            updates.append("message = ?")
+            params.append(message)
+        if progress_current is not None:
+            updates.append("progress_current = ?")
+            params.append(progress_current)
+        if progress_total is not None:
+            updates.append("progress_total = ?")
+            params.append(progress_total)
+        if result_json is not None:
+            updates.append("result_json = ?")
+            params.append(result_json)
+        
+        updates.append(f"finished_at = CASE WHEN {finished_at} IS NOT NULL THEN {finished_at} ELSE finished_at END")
+        params.append(run_id)
+
+        cur.execute(
+            f"UPDATE runs SET {', '.join(updates)} WHERE run_id = ?",
+            params
+        )
+
+def get_run(run_id: str) -> dict[str, Any] | None:
+    with _CursorManager(row_factory=sqlite3.Row) as cur:
+        cur.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
+        return _row_to_dict(cur.fetchone())
+
+def list_runs(limit: int = 50, status: str | None = None) -> list[dict[str, Any]]:
+    with _CursorManager(row_factory=sqlite3.Row) as cur:
+        if status:
+            cur.execute("SELECT * FROM runs WHERE status = ? ORDER BY started_at DESC LIMIT ?", (status, limit))
+        else:
+            cur.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,))
+        return _rows(cur.fetchall())
+
+def add_run_event(run_id: str, level: str, message: str, metadata_json: str | None = None) -> None:
+    with _CursorManager() as cur:
+        cur.execute(
+            """
+            INSERT INTO run_events (run_id, level, message, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            """,
+            (run_id, level, message, metadata_json)
+        )
+
+def get_run_events(run_id: str) -> list[dict[str, Any]]:
+    with _CursorManager(row_factory=sqlite3.Row) as cur:
+        cur.execute("SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC", (run_id,))
+        return _rows(cur.fetchall())
+
+def create_source_run(run_id: str, source_id: str, status: str = "queued") -> int:
+    with _CursorManager() as cur:
+        cur.execute(
+            """
+            INSERT INTO source_runs (run_id, source_id, status, created_at)
+            VALUES (?, ?, ?, datetime('now'))
+            """,
+            (run_id, source_id, status)
+        )
+        return cur.lastrowid
+
+def update_source_run(
+    source_run_id: int,
+    status: str,
+    latency_ms: int | None = None,
+    result_count: int | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    rate_limit_reset: str | None = None
+) -> None:
+    with _CursorManager() as cur:
+        updates = ["status = ?"]
+        params: list[Any] = [status]
+        if latency_ms is not None:
+            updates.append("latency_ms = ?")
+            params.append(latency_ms)
+        if result_count is not None:
+            updates.append("result_count = ?")
+            params.append(result_count)
+        if error_code is not None:
+            updates.append("error_code = ?")
+            params.append(error_code)
+        if error_message is not None:
+            updates.append("error_message = ?")
+            params.append(error_message)
+        if rate_limit_reset is not None:
+            updates.append("rate_limit_reset = ?")
+            params.append(rate_limit_reset)
+        
+        params.append(source_run_id)
+        cur.execute(f"UPDATE source_runs SET {', '.join(updates)} WHERE id = ?", params)
+
+def get_source_runs(run_id: str) -> list[dict[str, Any]]:
+    with _CursorManager(row_factory=sqlite3.Row) as cur:
+        cur.execute("SELECT * FROM source_runs WHERE run_id = ? ORDER BY created_at ASC", (run_id,))
+        return _rows(cur.fetchall())
+
+def create_application_session(session_id: str, job_id: int, run_id: str, status: str = "created", provider: str | None = None) -> None:
+    with _CursorManager() as cur:
+        cur.execute(
+            """
+            INSERT INTO application_sessions (session_id, job_id, run_id, status, provider_detected, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (session_id, job_id, run_id, status, provider)
+        )
+
+def update_application_session(session_id: str, status: str, lock_token: str | None = None) -> None:
+    with _CursorManager() as cur:
+        updates = ["status = ?", "updated_at = datetime('now')"]
+        params: list[Any] = [status]
+        if lock_token is not None:
+            updates.append("lock_token = ?")
+            params.append(lock_token)
+        params.append(session_id)
+        cur.execute(f"UPDATE application_sessions SET {', '.join(updates)} WHERE session_id = ?", params)
+
+def get_application_session(session_id: str) -> dict[str, Any] | None:
+    with _CursorManager(row_factory=sqlite3.Row) as cur:
+        cur.execute("SELECT * FROM application_sessions WHERE session_id = ?", (session_id,))
+        return _row_to_dict(cur.fetchone())
 
 # --- Semantic Vector Search (ChromaDB) ---------------------------------------
 _chroma_client = None

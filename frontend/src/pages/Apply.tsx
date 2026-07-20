@@ -21,7 +21,7 @@ export default function Apply() {
       if (data.length > 0 && !selectedJobId) {
         handleSelectApp(data[0].job_id);
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
     }
   };
@@ -29,6 +29,7 @@ export default function Apply() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchApps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSelectApp(jobId: number) {

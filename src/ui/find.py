@@ -12,11 +12,11 @@ from ..sources import aggregate
 def _score_badge(score: int | None) -> str:
     if not score:
         return "⬜ —"
-    if score >= 8:
-        return f"🟢 {score}/10"
-    if score >= 6:
-        return f"🟡 {score}/10"
-    return f"🔴 {score}/10"
+    if score >= 80 or (score <= 10 and score >= 8):
+        return f"🟢 {score}{'/100' if score > 10 else '/10'}"
+    if score >= 60 or (score <= 10 and score >= 6):
+        return f"🟡 {score}{'/100' if score > 10 else '/10'}"
+    return f"🔴 {score}{'/100' if score > 10 else '/10'}"
 
 
 def _fetch_and_score(prefs: dict, per_source_limit: int) -> None:
@@ -38,7 +38,13 @@ def _fetch_and_score(prefs: dict, per_source_limit: int) -> None:
             progress=lambda done, total: bar.progress(done / total, text=f"Scoring {done}/{total}…"),
         )
         for item in scored:
-            db.set_job_score(item["job"]["id"], item["score"], item["reason"])
+            db.set_job_score(
+                item["job"]["id"],
+                item["score"],
+                item["reason"],
+                score_breakdown=item.get("breakdown"),
+                red_flags=item.get("red_flags"),
+            )
         bar.empty()
     st.rerun()
 
@@ -68,9 +74,16 @@ def _parse_and_score_custom_url(url: str, prefs: dict) -> None:
             results = matcher.score_jobs([job], profile, prefs)
             if results:
                 job_id = db.upsert_job(job)
-                db.set_job_score(job_id, results[0]["score"], results[0]["reason"])
+                res = results[0]
+                db.set_job_score(
+                    job_id,
+                    res["score"],
+                    res["reason"],
+                    score_breakdown=res.get("breakdown"),
+                    red_flags=res.get("red_flags"),
+                )
                 db.get_or_create_application(job_id) # Save to tracker
-                st.success(f"Job parsed, saved, and scored as {results[0]['score']}/10!")
+                st.success(f"Job parsed, saved, and scored as {res['score']}/100!")
                 st.toast("Job saved to your tracker!")
                 st.rerun()
             else:

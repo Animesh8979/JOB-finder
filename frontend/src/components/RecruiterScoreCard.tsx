@@ -19,22 +19,9 @@ import { useAppStore } from "../store/useAppStore";
 import toast from "react-hot-toast";
 import BorderBeam from "./BorderBeam";
 
-interface RuleItem {
-  category: string;
-  rule: string;
-  delta: number;
-  note: string;
-}
 
-interface RecruiterScoreReport {
-  total: number;
-  by_category: Record<string, number>;
-  bonus: number;
-  deduction: number;
-  rationale: RuleItem[];
-  inspirations: string[];
-  inspirer: string;
-}
+
+
 
 export default function RecruiterScoreCard({
   className = "",

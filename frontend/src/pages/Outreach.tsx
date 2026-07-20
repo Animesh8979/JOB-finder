@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Search, RefreshCw, Mail, CheckCircle, Info, ExternalLink, AlertTriangle } from 'lucide-react';
+import OutreachQueue from '../components/OutreachQueue';
 
 export default function Outreach() {
   const [contacts, setContacts] = useState<any[]>([]);
@@ -151,6 +152,9 @@ export default function Outreach() {
           <span className="text-sm font-medium">{message.text}</span>
         </div>
       )}
+
+      {/* HITL Outreach Approval Queue */}
+      <OutreachQueue />
 
       {/* CAN-SPAM & GDPR Compliance Card */}
       <div className="bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-2xl p-6 backdrop-blur-xl space-y-4">

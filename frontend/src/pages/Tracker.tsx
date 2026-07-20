@@ -3,6 +3,7 @@ import { Application } from '../types';
 import React, { useState, useEffect } from 'react';
 import { BarChart3, Clock, AlertTriangle, RefreshCw, MessageSquare, Save, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import MockInterviewModal from '../components/MockInterviewModal';
 
 export default function Tracker() {
   const [apps, setApps] = useState<Application[]>([]);
@@ -11,6 +12,7 @@ export default function Tracker() {
   
   // Modal states
   const [selectedApp, setSelectedApp] = useState<any>(null);
+  const [mockApp, setMockApp] = useState<any>(null);
   const [notesInput, setNotesInput] = useState('');
   const [statusSelect, setStatusSelect] = useState('');
   
@@ -248,9 +250,17 @@ export default function Tracker() {
                 <h3 className="text-lg font-semibold text-white">{selectedApp.title}</h3>
                 <p className="text-sm text-muted mt-1">{selectedApp.company}</p>
               </div>
-              <button onClick={() => setSelectedApp(null)} className="text-gray-400 hover:text-white">
-                <X size={20} />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setMockApp(selectedApp)}
+                  className="px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5"
+                >
+                  🎙️ AI Mock Interview
+                </button>
+                <button onClick={() => setSelectedApp(null)} className="text-gray-400 hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-6">
@@ -311,6 +321,16 @@ export default function Tracker() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Mock Interview Modal */}
+      {mockApp && (
+        <MockInterviewModal
+          jobId={mockApp.job_id}
+          jobTitle={mockApp.title}
+          companyName={mockApp.company}
+          onClose={() => setMockApp(null)}
+        />
       )}
     </div>
   );

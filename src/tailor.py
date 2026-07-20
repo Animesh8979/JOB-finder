@@ -9,7 +9,7 @@ from typing import Any
 
 from . import llm
 from .profile_parser import profile_context
-from .fabrication_shield import verify_cover_letter_claims
+from .fabrication_shield import verify_cover_letter_claims, verify_resume_claims
 
 NO_FABRICATION = (
     "CRITICAL RULES:\n"
@@ -72,6 +72,7 @@ def tailor_resume(job: dict[str, Any], profile: dict[str, Any], prefs: dict[str,
     for key in ("skills", "experience", "education", "projects", "certifications"):
         data.setdefault(key, [])
     data.setdefault("summary", "")
+    data = verify_resume_claims(data, profile, prefs)
     return data
 
 

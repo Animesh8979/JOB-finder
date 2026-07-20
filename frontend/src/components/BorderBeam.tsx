@@ -42,13 +42,12 @@ export default function BorderBeam({
       aria-hidden="true"
       className={`border-beam ${className}`}
       style={{
-        // CSS custom props — readable in the mounted <style> below.
-        ['--bb-color' as any]: color,
-        ['--bb-size' as any]: `${size}px`,
-        ['--bb-radius' as any]: radius,
-        ['--bb-duration' as any]: `${duration}s`,
-        ['--bb-delay' as any]: `${delay}s`,
-      }}
+        '--bb-color': color,
+        '--bb-size': `${size}px`,
+        '--bb-radius': radius,
+        '--bb-duration': `${duration}s`,
+        '--bb-delay': `${delay}s`,
+      } as React.CSSProperties}
     />
   );
 }

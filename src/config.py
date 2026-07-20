@@ -30,13 +30,15 @@ SECRETS_PATH = DATA_DIR / "secrets.json"
 FERNET_KEY_PATH = DATA_DIR / ".fernet_key"
 ENV_PATH = ROOT / ".env"
 
-# Ensure data directories exist on import.
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+# Avoid import-time side-effects during tests
+if not os.environ.get("JOBFINDER_TEST_MODE"):
+    # Ensure data directories exist on import.
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-# Load .env if present (used only as a fallback for secrets).
-load_dotenv(ENV_PATH)
+    # Load .env if present (used only as a fallback for secrets).
+    load_dotenv(ENV_PATH)
 
 
 # --- Small JSON helpers ------------------------------------------------------
@@ -178,10 +180,19 @@ def list_profiles() -> list[str]:
     """Return names of all saved profile files."""
     return [p.stem for p in PROFILES_DIR.glob("*.json")]
 
+import re
+
+def _validate_profile_name(name: str) -> str:
+    """Ensure name doesn't contain path traversal characters."""
+    if not re.match(r'^[\w\-\.]+$', name) or ".." in name:
+        raise ValueError("Invalid profile name")
+    return name
+
 def load_profile(name: str | None = None) -> dict[str, Any]:
     """Load a named profile, or the active one."""
     if name is None:
         name = load_prefs().get("active_profile", "default")
+    name = _validate_profile_name(name)
     path = PROFILES_DIR / f"{name}.json"
     if path.exists():
         return _load_json(path, {})
@@ -191,6 +202,7 @@ def load_profile(name: str | None = None) -> dict[str, Any]:
 def save_profile(data: dict[str, Any], name: str | None = None) -> None:
     if name is None:
         name = load_prefs().get("active_profile", "default")
+    name = _validate_profile_name(name)
     _save_json(PROFILES_DIR / f"{name}.json", data)
 
 
@@ -198,6 +210,8 @@ def save_profile(data: dict[str, Any], name: str | None = None) -> None:
 def provider_ready() -> bool:
     """True if the selected AI provider is ready to serve requests."""
     p = provider()
+    if p == "auto":
+        return True
     if p == "gemini":
         return bool(gemini_key())
     if p == "nvidia":

@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, Any
+from datetime import datetime, timezone
 
 # Same category taxonomy the upstream README documents
 CATEGORIES = ("open_source", "self_projects", "production", "technical_skills")
@@ -299,7 +300,7 @@ def score(
         })
 
     bonus = min(bonus, MAX_BONUS_POINTS)
-    deduction = max(-MAX_DEDUCTION_POINTS, min(0, deduction))
+    deduction = max(-MAX_DEDUCTION_POINTS, min(0, -deduction))
     cat_sum = sum(by_category.values())
     total = cat_sum + bonus + deduction
     total = max(MIN_FINAL_SCORE, min(MAX_FINAL_SCORE, total))
@@ -317,4 +318,211 @@ def score(
         deduction=deduction,
         rationale=rationale,
         inspirations=inspirations,
+    )
+
+
+@dataclass
+class JobScoreReport:
+    total: int
+    breakdown: dict[str, Any]
+    reasons: list[str] = field(default_factory=list)
+    red_flags: list[str] = field(default_factory=list)
+    inspirations: list[str] = field(default_factory=list)
+    evidence_snippets: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total,
+            "breakdown": self.breakdown,
+            "reasons": self.reasons,
+            "red_flags": self.red_flags,
+            "inspirations": self.inspirations,
+            "evidence_snippets": self.evidence_snippets,
+        }
+
+
+def score_job(
+    job: dict[str, Any],
+    profile: dict[str, Any],
+    prefs: Optional[dict[str, Any]] = None,
+    dense_sim: float = 0.0,
+    sparse_overlap: float = 0.0,
+) -> JobScoreReport:
+    """Compute explicit 0-100 categorical score breakdown for a job match.
+
+    Breakdown categories and weights (sum = 100):
+      - skills: max 30
+      - role: max 20
+      - seniority: max 20
+      - location: max 15
+      - salary: max 10
+      - freshness: max 5
+    """
+    prefs = prefs or {}
+    breakdown = {
+        "skills": 0,
+        "role": 0,
+        "seniority": 0,
+        "location": 0,
+        "salary": 0,
+        "freshness": 0,
+    }
+    reasons: list[str] = []
+    red_flags: list[str] = []
+
+    # --- 1. Skills (max 30) ---
+    cand_skills = {s.strip().lower() for s in (profile.get("skills") or []) if s and s.strip()}
+    summary_text = str(profile.get("summary") or profile.get("raw_text") or "").lower()
+    for s in cand_skills:
+        pass  # cand_skills set built
+
+    job_text = f"{job.get('title', '')} {job.get('description', '')} {' '.join(job.get('tags') or [])}".lower()
+    hits = sum(1 for s in cand_skills if s in job_text)
+    keyword_score = min(30, int(hits * 6)) if cand_skills else 15
+    sim_score = int(dense_sim * 30 + sparse_overlap * 15)
+    breakdown["skills"] = min(30, max(keyword_score, sim_score))
+
+    # --- 2. Role (max 20) ---
+    job_title = str(job.get("title") or "").lower()
+    target_titles = [str(t).lower().strip() for t in (prefs.get("titles") or []) if t]
+    recent_roles = []
+    for exp in (profile.get("experience") or []):
+        if isinstance(exp, dict) and exp.get("title"):
+            recent_roles.append(str(exp["title"]).lower())
+        elif isinstance(exp, str):
+            recent_roles.append(exp.lower())
+
+    if any(t in job_title or job_title in t for t in target_titles + recent_roles if t):
+        breakdown["role"] = 20
+    elif any(k in job_title for k in ("engineer", "developer", "architect", "programmer", "scientist", "analyst")):
+        breakdown["role"] = 15
+    else:
+        breakdown["role"] = 10
+
+    # --- 3. Seniority (max 20) ---
+    seniority_levels = {
+        "intern": 0,
+        "junior": 1,
+        "mid": 2,
+        "senior": 3,
+        "lead": 4,
+        "staff": 5,
+        "principal": 6,
+        "director": 7,
+        "vp": 8,
+    }
+    job_level = 2
+    for kw, lvl in seniority_levels.items():
+        if re.search(rf"\b{kw}\b", job_title):
+            job_level = lvl
+            break
+
+    cand_pref_level = prefs.get("seniority", "").lower()
+    if cand_pref_level in seniority_levels:
+        cand_level = seniority_levels[cand_pref_level]
+    else:
+        yrs = int(profile.get("years_experience") or 3)
+        if yrs <= 1:
+            cand_level = 1
+        elif yrs <= 3:
+            cand_level = 2
+        elif yrs <= 6:
+            cand_level = 3
+        elif yrs <= 10:
+            cand_level = 4
+        else:
+            cand_level = 5
+
+    diff = abs(job_level - cand_level)
+    if diff == 0:
+        breakdown["seniority"] = 20
+    elif diff == 1:
+        breakdown["seniority"] = 14
+    elif diff == 2:
+        breakdown["seniority"] = 8
+    else:
+        breakdown["seniority"] = 3
+        red_flags.append(f"Seniority mismatch (level {job_level} vs candidate level {cand_level})")
+
+    # --- 4. Location (max 15) ---
+    is_remote = bool(job.get("remote", 1)) or "remote" in job_title or "remote" in str(job.get("location", "")).lower()
+    if is_remote:
+        breakdown["location"] = 15
+    elif prefs.get("remote_only"):
+        breakdown["location"] = 0
+        red_flags.append("Requires on-site/hybrid outside preferred remote setting")
+    else:
+        cand_loc = str(prefs.get("location") or profile.get("location") or "").lower()
+        job_loc = str(job.get("location") or "").lower()
+        if cand_loc and (cand_loc in job_loc or job_loc in cand_loc):
+            breakdown["location"] = 15
+        else:
+            breakdown["location"] = 10
+
+    # --- 5. Salary (max 10) ---
+    min_sal = prefs.get("min_salary")
+    sal_max = job.get("salary_max") or job.get("salary_min")
+    if isinstance(min_sal, (int, float)) and min_sal > 0 and isinstance(sal_max, (int, float)) and sal_max > 0:
+        if sal_max >= min_sal:
+            breakdown["salary"] = 10
+        else:
+            breakdown["salary"] = 0
+            red_flags.append(f"Salary maximum (${sal_max}) below candidate minimum (${min_sal})")
+    else:
+        breakdown["salary"] = 10
+
+    # --- 6. Freshness (max 5) ---
+    date_str = job.get("posted_at") or job.get("fetched_at")
+    days_old = 1
+    if date_str:
+        try:
+            dt = datetime.fromisoformat(str(date_str).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            days_old = max(0, (datetime.now(timezone.utc) - dt).days)
+        except Exception:
+            days_old = 5
+    if days_old <= 2:
+        breakdown["freshness"] = 5
+    elif days_old <= 7:
+        breakdown["freshness"] = 4
+    elif days_old <= 14:
+        breakdown["freshness"] = 3
+    elif days_old <= 30:
+        breakdown["freshness"] = 2
+    else:
+        breakdown["freshness"] = 1
+
+    total = sum(v for k, v in breakdown.items() if isinstance(v, (int, float)))
+    total = max(0, min(100, int(total)))
+
+    evidence_snippets = []
+    desc_text = str(job.get("description") or "")
+    if desc_text and cand_skills:
+        clauses = re.split(r'[.!?\n]+', desc_text)
+        for clause in clauses:
+            cleaned = clause.strip()
+            if len(cleaned) < 15 or len(cleaned) > 250:
+                continue
+            cleaned_lower = cleaned.lower()
+            matching_sk = [sk for sk in cand_skills if sk in cleaned_lower and len(sk) >= 3]
+            if matching_sk:
+                evidence_snippets.append(f'"{cleaned}" (matched: {", ".join(matching_sk[:2])})')
+                if len(evidence_snippets) >= 3:
+                    break
+
+    breakdown["evidence_snippets"] = evidence_snippets
+
+    if hits > 0:
+        reasons.append(f"Matched {hits} key skills with {breakdown['role']}/20 role alignment")
+    else:
+        reasons.append(f"Fit score {total}/100 based on role and seniority compatibility")
+
+    return JobScoreReport(
+        total=total,
+        breakdown=breakdown,
+        reasons=reasons,
+        red_flags=red_flags,
+        inspirations=["Deterministic rubric evaluation for explicit 0-100 categorical breakdown."],
+        evidence_snippets=evidence_snippets,
     )

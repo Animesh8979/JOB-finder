@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from .. import config, profile_parser
+from .. import config, profile_parser, autonomous_resume_agent
 
 
 
@@ -209,6 +209,42 @@ def _resume_section(prefs: dict) -> None:
                 st.write("**Skills:** " + ", ".join(map(str, profile["skills"])))
             if profile.get("target_titles"):
                 st.caption("Suggested titles: " + ", ".join(profile["target_titles"]))
+
+        # --- Autonomous ATS Doctor & Zero-Intervention Auto-Fixer ---
+        st.markdown("---")
+        st.subheader("⚡ Autonomous ATS Doctor & 1-Click Auto-Fixer")
+        st.caption("Runs HackerRank open-source ATS scoring, enriches GitHub open-source stats via public APIs, and automatically fixes bullet points with 0% hallucination.")
+        
+        if st.button("🚀 Run 1-Click Autonomous Audit & Auto-Fix", type="primary", use_container_width=True):
+            with st.spinner("Analyzing resume against HackerRank ATS rubric & GitHub APIs..."):
+                res = autonomous_resume_agent.audit_and_autofix_resume(profile, prefs)
+                st.session_state["autofix_result"] = res
+                st.success(f"Resume Upgraded! Score Delta: {res['before_score']['total']}/120 ➔ **{res['after_score']['total']}/120** (+{res['score_delta']} pts)")
+
+        if "autofix_result" in st.session_state:
+            res = st.session_state["autofix_result"]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Initial HackerRank Score", f"{res['before_score']['total']} / 120")
+            c2.metric("Upgraded HackerRank Score", f"{res['after_score']['total']} / 120", delta=f"+{res['score_delta']}")
+            c3.metric("GitHub Verified Repos", f"{res.get('github_enrichment', {}).get('public_repos', 0)}")
+
+            with st.expander("🔍 Diagnostic Weaknesses & Audit Trail", expanded=True):
+                for diag in res.get("diagnostics", []):
+                    if "[VERIFIED]" in diag:
+                        st.success(diag)
+                    elif "[GAP]" in diag or "[DIAGNOSTIC]" in diag:
+                        st.warning(diag)
+                    else:
+                        st.info(diag)
+
+            if res.get("fixes_applied"):
+                with st.expander("🛠️ Zero-Hallucination Bullet Fixes Applied", expanded=True):
+                    for fix in res["fixes_applied"]:
+                        st.markdown(f"**{fix['company']}** (`{fix['verification']}`)")
+                        for before_b, after_b in zip(fix.get("before", []), fix.get("after", [])):
+                            if before_b != after_b:
+                                st.markdown(f"- ❌ *Before:* {before_b}")
+                                st.markdown(f"- ✅ **After:** {after_b}")
 
         with st.expander("✏️ Edit parsed profile"):
             with st.form("edit_profile_form"):

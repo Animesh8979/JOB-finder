@@ -42,7 +42,7 @@ export default function Tailor() {
       if (data.length > 0 && !selectedJobId) {
         handleSelectApp(data[0].job_id);
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
     } finally {
       setLoadingApps(false);
@@ -52,6 +52,7 @@ export default function Tailor() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchApps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSelectApp(jobId: number) {
@@ -69,7 +70,6 @@ export default function Tailor() {
     try {
       const r = await fetch(`/api/applications/${jobId}`);
       const data = await r.json();
-      setAppDetail(data);
       if (data.cover_letter_text) {
         setClText(data.cover_letter_text);
       }

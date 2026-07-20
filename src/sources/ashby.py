@@ -1,11 +1,32 @@
 """Ashby API source integration — modern ATS with public JSON endpoints."""
 import time
-from typing import Any
+from typing import Any, Optional
 from . import base, client
+from .adapter_base import SourceAdapter, CancellationToken
 
 SOURCE_ID = "ashby"
 
-def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]:
+class AshbyAdapter(SourceAdapter):
+    @property
+    def source_id(self) -> str:
+        return SOURCE_ID
+
+    def fetch(
+        self,
+        query: str,
+        limit: int,
+        prefs: dict[str, Any],
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> list[dict[str, Any]]:
+        return fetch(query, limit, prefs, cancel_token=cancel_token)
+
+
+def fetch(
+    query: str,
+    limit: int,
+    prefs: dict[str, Any],
+    cancel_token: Optional[CancellationToken] = None,
+) -> list[dict[str, Any]]:
     """Fetch jobs from Ashby job boards configured in preferences."""
     boards = prefs.get("ashby_boards") or []
     if not boards:
@@ -14,6 +35,9 @@ def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]
     jobs_out = []
     
     for board in boards:
+        if cancel_token and cancel_token.is_cancelled():
+            break
+
         if jobs_out:
             time.sleep(1.0)
         
@@ -24,6 +48,8 @@ def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]
                 continue
             
             for j in resp["jobs"]:
+                if cancel_token and cancel_token.is_cancelled():
+                    break
                 title = j.get("title", "")
                 if query and query.lower() not in title.lower():
                     continue

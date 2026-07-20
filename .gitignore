@@ -25,3 +25,5 @@ data/.fernet_key
 
 # ChromaDB vector store (regenerable from job data)
 data/chroma/
+data/*.db-shm
+data/*.db-wal

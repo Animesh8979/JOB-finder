@@ -6,8 +6,11 @@ from typing import Any
 from . import adzuna, arbeitnow, base, himalayas, jobicy, remoteok, remotive
 from . import greenhouse, lever, weworkremotely, hackernews, ashby, builtin
 from . import wellfound, otta, themuse, usajobs, dice, simplyhired, careerbuilder, monster
+from . import jobspy_adapter
 
 REGISTRY = {
+    # --- JobSpy Tier-1 Scraping Swarm ---
+    "jobspy": jobspy_adapter,
     # --- Free public APIs (no auth needed) ---
     "remotive": remotive,
     "remoteok": remoteok,
@@ -79,31 +82,7 @@ def _inject_ats_defaults(prefs: dict[str, Any]) -> dict[str, Any]:
 def fetch_all(
     prefs: dict[str, Any], per_source_limit: int = 50
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Return (deduped+prefiltered jobs, {source: error_message})."""
-    query = build_query(prefs)
-    prefs = _inject_ats_defaults(prefs)
-    enabled = prefs.get("sources") or list(REGISTRY)
-    collected: list[dict[str, Any]] = []
-    errors: dict[str, str] = {}
-
-    for sid in enabled:
-        mod = REGISTRY.get(sid)
-        if mod is None:
-            continue
-        try:
-            collected.extend(mod.fetch(query, per_source_limit, prefs))
-        except Exception as e:  # one bad source shouldn't break the page
-            errors[sid] = str(e)
-
-    seen: set[str] = set()
-    deduped: list[dict[str, Any]] = []
-    for job in collected:
-        if not base.matches_filters(job, prefs):
-            continue
-        key = job["dedupe_key"]
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(job)
-
-    return deduped, errors
+    """Return (deduped+prefiltered jobs, {source: error_message}) via parallel orchestrator."""
+    from .search_orchestrator import SearchOrchestrator
+    orchestrator = SearchOrchestrator(source_timeout_sec=12.0, global_timeout_sec=45.0, max_workers=8)
+    return orchestrator.fetch_parallel(prefs, per_source_limit=per_source_limit)

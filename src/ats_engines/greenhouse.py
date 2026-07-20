@@ -39,7 +39,7 @@ SCHEMA: dict[str, str] = {
 
 
 def _safe_set(page: Any, selector: str, value: str) -> bool:
-    """Set a text input value, swallowed-exception style. Returns True on success."""
+    """Set an input, select, or textarea value, swallowed-exception style. Returns True on success."""
     if not value:
         return False
     try:
@@ -48,7 +48,18 @@ def _safe_set(page: Any, selector: str, value: str) -> bool:
         el = page.wait_for_selector(selector, timeout=1500)
         if el is None:
             return False
-        el.fill(str(value))
+            
+        tag_name = el.evaluate("el => el.tagName.toLowerCase()")
+        if tag_name == "select":
+            try:
+                el.select_option(value=str(value), timeout=1000)
+            except Exception:
+                try:
+                    el.select_option(label=str(value), timeout=1000)
+                except Exception:
+                    return False
+        else:
+            el.fill(str(value))
         return True
     except Exception:
         return False
@@ -72,8 +83,9 @@ def fill_greenhouse(page: Any, cfg: dict[str, Any]) -> bool:
         value = profile.get(profile_key)
         if not value:
             continue
-        # name= selector — stable across Greenhouse deploys per their public docs.
-        if _safe_set(page, f'[name="{form_name}"]', str(value)):
+        # Robust selector covering input, select, and textarea fields
+        selector = f'input[name="{form_name}"], select[name="{form_name}"], textarea[name="{form_name}"]'
+        if _safe_set(page, selector, str(value)):
             filled += 1
 
     # Even if we did fill some, hand off to the hybrid filler for the rest

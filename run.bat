@@ -17,6 +17,9 @@ echo.
 
 :: Browser is opened automatically by the server process once ready
 
+:: Start Huey Worker in a new window (2 workers)
+start "JobFinder Worker" "%VPY%" -m huey.bin.huey_consumer src.tasks.huey -w 2
+
 :: Run the server
 "%VPY%" server.py
 pause

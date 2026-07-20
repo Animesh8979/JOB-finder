@@ -19,7 +19,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import CountVectorizer
 
-from . import llm
+from . import llm, recruiter_score
 from .profile_parser import profile_context
 
 # Configurable embedder. Default stays MiniLM to keep existing ChromaDB embeddings
@@ -75,9 +75,10 @@ def preload_encoder() -> None:
 
 _SCORE_SYSTEM = (
     "You are a precise, no-nonsense technical recruiter and an ATS simulator. Given a candidate profile, "
-    "a list of job postings, and their dense/sparse overlap metrics, rate how well the candidate fits "
-    "EACH job from 1 (poor) to 10 (excellent). Judge realistically on skills, seniority, domain, and ATS "
-    "keyword match probability. Give a reason of at most 15 words. Never invent candidate skills."
+    "a list of job postings, their dense/sparse overlap metrics, and rule-based sub-scores, rate how well "
+    "the candidate fits EACH job with a total score from 0 to 100 and categorical breakdown "
+    "(skills out of 30, role out of 20, seniority out of 20, location out of 15, salary out of 10, freshness out of 5). "
+    "Give a reason of at most 15 words. Never invent candidate skills."
 )
 
 BATCH_SIZE = 6
@@ -156,7 +157,7 @@ def pre_filter_jobs(
     )
     
     emb_dict = {}
-    if embeddings_data and "embeddings" in embeddings_data and embeddings_data["embeddings"]:
+    if embeddings_data and "embeddings" in embeddings_data and embeddings_data["embeddings"] is not None and len(embeddings_data["embeddings"]) > 0:
         emb_dict = {id_: emb for id_, emb in zip(embeddings_data["ids"], embeddings_data["embeddings"])}
         
     filtered = []
@@ -216,7 +217,7 @@ def score_jobs(
         batch_ids = [str(j["id"]) for j in batch]
         embeddings_data = collection.get(ids=batch_ids, include=["embeddings"])
         emb_dict = {}
-        if embeddings_data and "embeddings" in embeddings_data and embeddings_data["embeddings"]:
+        if embeddings_data and "embeddings" in embeddings_data and embeddings_data["embeddings"] is not None and len(embeddings_data["embeddings"]) > 0:
             emb_dict = {id_: emb for id_, emb in zip(embeddings_data["ids"], embeddings_data["embeddings"])}
             
         vectorizer = CountVectorizer(stop_words="english", ngram_range=(1, 2))
@@ -228,6 +229,7 @@ def score_jobs(
             profile_sparse = np.zeros(1)
             
         listing = []
+        batch_reports = {}
         for i, job in enumerate(batch):
             sal = ""
             if job.get("salary_min") or job.get("salary_max"):
@@ -254,25 +256,33 @@ def score_jobs(
             except ValueError:
                 sparse_overlap = 0.0
                 
+            report = recruiter_score.score_job(
+                job, profile, prefs, dense_sim=dense_sim, sparse_overlap=sparse_overlap
+            )
+            batch_reports[i] = report
+
             listing.append(
                 f"[{i}] {job.get('title','')} @ {job.get('company','')} "
                 f"({job.get('location','')}){sal}\n"
                 f"tags: {', '.join(job.get('tags') or [])}\n"
                 f"description: {job_desc}\n"
-                f"ATS Dense Similarity: {dense_sim:.3f} | ATS Sparse Overlap: {sparse_overlap:.3f}"
+                f"ATS Dense Similarity: {dense_sim:.3f} | ATS Sparse Overlap: {sparse_overlap:.3f}\n"
+                f"Rule-based Sub-scores: {report.breakdown} (Total: {report.total}/100)"
             )
         prompt = (
             steer
             + "Score these jobs for the candidate. Return a JSON array; one object per job "
-            'with keys: index (int), score (int 1-10), reason (str <=15 words).\n\n'
+            'with keys: index (int), score (int 0-100), breakdown (dict with keys skills, role, seniority, location, salary, freshness), reason (str <=15 words).\n\n'
             + "\n\n".join(listing)
         )
-        try:
-            data = llm.generate_json(
-                prompt, system=_SCORE_SYSTEM, cached_context=ctx, model=model, max_tokens=600
-            )
-        except llm.LLMError:
-            data = []
+        data = []
+        if llm.provider_ready():
+            try:
+                data = llm.generate_json(
+                    prompt, system=_SCORE_SYSTEM, cached_context=ctx, model=model, max_tokens=800
+                )
+            except llm.LLMError:
+                data = []
 
         by_index = {}
         if isinstance(data, list):
@@ -281,13 +291,41 @@ def score_jobs(
                     by_index[int(item["index"])] = item
 
         for i, job in enumerate(batch):
+            report = batch_reports[i]
             item = by_index.get(i, {})
-            try:
-                score = max(1, min(10, int(item.get("score", 5))))
-            except Exception:
-                score = 5
-            reason = str(item.get("reason", "") or "Not scored").strip()
-            results.append({"job": job, "score": score, "reason": reason})
+            
+            score = report.total
+            breakdown = dict(report.breakdown)
+            reason = report.reasons[0] if report.reasons else "Scored via rule-based rubric"
+            red_flags = list(report.red_flags)
+
+            if item and "score" in item:
+                try:
+                    score = max(0, min(100, int(item["score"])))
+                    if isinstance(item.get("breakdown"), dict):
+                        b = item["breakdown"]
+                        breakdown = {
+                            "skills": max(0, min(30, int(b.get("skills", breakdown["skills"])))),
+                            "role": max(0, min(20, int(b.get("role", breakdown["role"])))),
+                            "seniority": max(0, min(20, int(b.get("seniority", breakdown["seniority"])))),
+                            "location": max(0, min(15, int(b.get("location", breakdown["location"])))),
+                            "salary": max(0, min(10, int(b.get("salary", breakdown["salary"])))),
+                            "freshness": max(0, min(5, int(b.get("freshness", breakdown["freshness"])))),
+                        }
+                        score = sum(v for v in breakdown.values() if isinstance(v, (int, float)))
+                        breakdown["evidence_snippets"] = getattr(report, "evidence_snippets", [])
+                    if item.get("reason"):
+                        reason = str(item["reason"]).strip()
+                except Exception:
+                    pass
+
+            results.append({
+                "job": job,
+                "score": score,
+                "reason": reason,
+                "breakdown": breakdown,
+                "red_flags": red_flags,
+            })
 
         if progress:
             progress(min(start + BATCH_SIZE, total), total)

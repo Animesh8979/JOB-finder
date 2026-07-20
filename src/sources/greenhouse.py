@@ -1,9 +1,30 @@
 """Greenhouse API source integration."""
 import time
-from typing import Any
+from typing import Any, Optional
 from . import base, client
+from .adapter_base import SourceAdapter, CancellationToken
 
-def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]:
+class GreenhouseAdapter(SourceAdapter):
+    @property
+    def source_id(self) -> str:
+        return "greenhouse"
+
+    def fetch(
+        self,
+        query: str,
+        limit: int,
+        prefs: dict[str, Any],
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> list[dict[str, Any]]:
+        return fetch(query, limit, prefs, cancel_token=cancel_token)
+
+
+def fetch(
+    query: str,
+    limit: int,
+    prefs: dict[str, Any],
+    cancel_token: Optional[CancellationToken] = None,
+) -> list[dict[str, Any]]:
     """Fetch jobs from Greenhouse APIs configured in preferences."""
     boards = prefs.get("greenhouse_boards") or []
     if not boards:
@@ -13,6 +34,9 @@ def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]
     headers = {"Accept": "application/json"}
     
     for board in boards:
+        if cancel_token and cancel_token.is_cancelled():
+            break
+
         # Respectful delay between boards
         if jobs_out:
             time.sleep(1.0)
@@ -24,6 +48,8 @@ def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]
                 continue
                 
             for j in resp["jobs"]:
+                if cancel_token and cancel_token.is_cancelled():
+                    break
                 title = j.get("title", "")
                 if query and query.lower() not in title.lower():
                     continue

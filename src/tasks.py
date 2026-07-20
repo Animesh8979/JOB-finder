@@ -7,25 +7,36 @@ import random
 # Use a purely local SQLite task queue, dropping the Redis requirement.
 huey = SqliteHuey(filename=str(config.DATA_DIR / 'huey.db'))
 
-@huey.task()
-def run_apify_scraping_task(query: str, location: str, limit: int):
+@huey.task(retries=3, retry_delay=10)
+def run_apify_scraping_task(query: str, location: str, limit: int, run_id: Optional[str] = None):
     """Event-driven choregraphy: scrapes jobs and implicitly chains scoring upon completion."""
+    if run_id:
+        db.update_run_status(run_id, "running")
     try:
         jobs = scraper.scrape_jobs_with_apify(query, location, limit)
         for job in jobs:
             db.upsert_job(job)
+        if run_id:
+            db.update_run_status(run_id, "completed")
         # Chain the scoring task directly rather than relying on arbitrary time.sleep()
         if config.provider_ready():
             run_score_all_task()
     except Exception as e:
+        if run_id:
+            db.update_run_status(run_id, "failed", str(e))
         print(f"Apify huey task error: {e}")
+        raise
 
-@huey.task()
-def run_score_all_task():
+@huey.task(retries=3, retry_delay=10)
+def run_score_all_task(run_id: Optional[str] = None):
     """Scores all unscored jobs in batch."""
+    if run_id:
+        db.update_run_status(run_id, "running")
     try:
         unscored = db.unscored_jobs(limit=100)
         if not unscored:
+            if run_id:
+                db.update_run_status(run_id, "completed")
             return
         profile = config.load_profile() or {}
         prefs = config.load_prefs()
@@ -37,16 +48,36 @@ def run_score_all_task():
         filtered_ids = {j["id"] for j in filtered_jobs}
         for job in unscored:
             if job["id"] not in filtered_ids:
-                db.set_job_score(job["id"], 1, f"Failed pre-filter (sim: {job.get('_pre_score', 0)})")
+                db.set_job_score(
+                    job["id"],
+                    0,
+                    f"Failed pre-filter (sim: {job.get('_pre_score', 0)})",
+                    score_breakdown={"skills": 0, "role": 0, "seniority": 0, "location": 0, "salary": 0, "freshness": 0},
+                    red_flags=["Failed pre-filter similarity threshold"],
+                )
                 
         if not filtered_jobs:
+            if run_id:
+                db.update_run_status(run_id, "completed")
             return
             
         scored_results = matcher.score_jobs(filtered_jobs, profile, prefs)
         for item in scored_results:
-            db.set_job_score(item["job"]["id"], item["score"], item["reason"])
+            db.set_job_score(
+                item["job"]["id"],
+                item["score"],
+                item["reason"],
+                score_breakdown=item.get("breakdown"),
+                red_flags=item.get("red_flags"),
+            )
+            
+        if run_id:
+            db.update_run_status(run_id, "completed")
     except Exception as e:
+        if run_id:
+            db.update_run_status(run_id, "failed", str(e))
         print(f"Match all huey task error: {e}")
+        raise
 
 @huey.task()
 def process_outreach_queue_task(contact_ids: list[int], job_ids: list[Optional[int]], tone: str, extra_notes: str):
@@ -85,20 +116,27 @@ def process_outreach_queue_task(contact_ids: list[int], job_ids: list[Optional[i
         # Stealth proxy / Organic jitter: avoid sending API rate limit spikes
         time.sleep(random.uniform(2.0, 5.0))
 
-@huey.task()
-def run_auto_apply_task(job_id: int):
+@huey.task(retries=1, retry_delay=10)
+def run_auto_apply_task(job_id: int, run_id: Optional[str] = None):
     """
     Background worker task to run the Playwright auto-apply sequence.
     This prevents the FastAPI web server from blocking during execution.
     """
+    if run_id:
+        db.update_run_status(run_id, "running")
+        
     job = db.get_job(job_id)
     if not job:
         print(f"[Auto-Apply Queue] Job {job_id} not found.")
+        if run_id:
+            db.update_run_status(run_id, "failed", "Job not found")
         return
         
     profile = config.load_profile()
     if not profile:
         print("[Auto-Apply Queue] Profile not configured. Cannot auto-apply.")
+        if run_id:
+            db.update_run_status(run_id, "failed", "Profile not configured")
         return
         
     from src import profile_parser
@@ -108,14 +146,24 @@ def run_auto_apply_task(job_id: int):
     import asyncio
     
     # Run the async Playwright function inside the sync Huey worker
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(connect_and_apply(job["url"], profile_text))
-    loop.close()
-    
-    if result.get("status") == "success":
-        print(f"[Auto-Apply Queue] Successfully processed job {job_id}.")
-        db.update_application(job_id, status="Applied", notes="Processed via Auto-Apply Queue.")
-    else:
-        print(f"[Auto-Apply Queue] Failed to process job {job_id}: {result.get('message')}")
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(connect_and_apply(job["url"], profile_text))
+        loop.close()
+        
+        if result.get("status") == "success":
+            print(f"[Auto-Apply Queue] Successfully prefilled job {job_id}.")
+            db.update_application(job_id, status="prefilled", notes="Processed via Auto-Apply Queue (Ready for Review).")
+            if run_id:
+                db.update_run_status(run_id, "completed")
+        else:
+            print(f"[Auto-Apply Queue] Failed to process job {job_id}: {result.get('message')}")
+            if run_id:
+                db.update_run_status(run_id, "failed", result.get("message"))
+    except Exception as e:
+        if run_id:
+            db.update_run_status(run_id, "failed", str(e))
+        print(f"[Auto-Apply Queue] Error: {e}")
+        raise
 

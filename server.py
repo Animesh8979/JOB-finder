@@ -12,10 +12,11 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from urllib.parse import urlparse
+import asyncio
 
-from src import config, db, profile_parser, scraper, matcher, insights, tailor, contacts_enricher
+from src import config, db, profile_parser, scraper, matcher, insights, tailor, contacts_enricher, autonomous_resume_agent, api_v2, run_manager
 from src.recruiter_score import score as recruiter_score, ScoreReport as _RecruiterScoreReport
 
 # Initialize Database
@@ -183,6 +184,7 @@ class DiscoverPayload(BaseModel):
     results_wanted: int = 20
 
 # --- API Endpoints ---
+app.include_router(api_v2.router)
 
 @app.get("/health")
 def health():
@@ -193,6 +195,27 @@ def health():
 def get_status():
     """Get candidate configuration readiness checks."""
     return config.readiness()
+
+@app.get("/api/stream/events")
+async def stream_events(request: Request):
+    """Server-Sent Events for run status and overall readiness."""
+    rm = run_manager.get_run_manager()
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+            
+            status_data = config.readiness()
+            recent_runs = rm.list_runs(limit=10)
+            
+            payload = {
+                "readiness": status_data,
+                "runs": recent_runs
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            await asyncio.sleep(2.0)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/profile")
 def get_profile():
@@ -256,6 +279,14 @@ def get_recruiter_score():
     report = recruiter_score(raw, github_handle=handle, skills=skills)
     return report.to_dict()
 
+@app.post("/api/resume/autonomous-upgrade", dependencies=[Depends(ai_limiter)])
+def autonomous_resume_upgrade():
+    """1-Click Autonomous Resume Audit, GitHub Public API Enrichment, and Zero-Hallucination Auto-Fix."""
+    prof = config.load_profile() or {}
+    prefs = config.load_prefs()
+    result = autonomous_resume_agent.audit_and_autofix_resume(prof, prefs)
+    return result
+
 @app.get("/api/profiles")
 def list_profiles():
     """List all available profile names."""
@@ -270,11 +301,17 @@ def save_named_profile(name: str, profile_data: dict):
 @app.delete("/api/profiles/{name}")
 def delete_profile(name: str):
     """Delete a specific profile."""
-    path = config.PROFILES_DIR / f"{name}.json"
-    if path.exists():
-        path.unlink()
-        return {"status": "success"}
-    raise HTTPException(status_code=404, detail="Profile not found.")
+    try:
+        import re
+        if not re.match(r'^[\w\-\.]+$', name) or ".." in name:
+            raise ValueError("Invalid profile name")
+        path = config.PROFILES_DIR / f"{name}.json"
+        if path.exists():
+            path.unlink()
+            return {"status": "success"}
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid profile name")
 
 @app.post("/api/profiles/{name}/activate")
 def activate_profile(name: str):
@@ -366,9 +403,13 @@ async def discover_jobs(payload: DiscoverPayload):
 @app.post("/api/jobs/{job_id}/auto-apply")
 async def auto_apply(job_id: int):
     """Queue the local Edge Playwright auto-apply bot in the background."""
+    import uuid
+    run_id = str(uuid.uuid4())
+    db.create_run(run_id, "auto_apply", json.dumps({"job_id": job_id}))
+    
     from src.tasks import run_auto_apply_task
-    run_auto_apply_task(job_id)
-    return {"status": "queued", "message": "Auto-apply process has been queued securely in the background."}
+    run_auto_apply_task(job_id, run_id=run_id)
+    return {"status": "queued", "run_id": run_id, "message": "Auto-apply process has been queued securely in the background."}
 
 @app.post("/api/outreach/process")
 def process_outreach():
@@ -411,9 +452,14 @@ def trigger_apify_scrape(payload: ApifyPayload):
     token = config.get_secret("apify_api_token", "APIFY_API_TOKEN")
     if not token:
         raise HTTPException(status_code=400, detail="Apify API Token not configured. Please add it in settings.")
+        
+    import uuid
+    run_id = str(uuid.uuid4())
+    db.create_run(run_id, "scrape_apify", payload.json())
+    
     from src.tasks import run_apify_scraping_task
-    run_apify_scraping_task(payload.query, payload.location, payload.limit)
-    return {"status": "success", "message": "Apify scraper queued in Huey."}
+    run_apify_scraping_task(payload.query, payload.location, payload.limit, run_id=run_id)
+    return {"status": "queued", "run_id": run_id, "message": "Apify scraper queued in Huey."}
 
 @app.post("/api/jobs/{id}/score", dependencies=[Depends(ai_limiter)])
 async def score_single_job(id: int):
@@ -439,9 +485,14 @@ def score_all_jobs():
     """Batch-calculate matching scores via durable Huey queue."""
     if not config.provider_ready():
         raise HTTPException(status_code=400, detail="AI Key not set.")
+        
+    import uuid
+    run_id = str(uuid.uuid4())
+    db.create_run(run_id, "score_all", "{}")
+    
     from src.tasks import run_score_all_task
-    run_score_all_task()
-    return {"status": "success", "message": "Background batch scoring queued in Huey."}
+    run_score_all_task(run_id=run_id)
+    return {"status": "queued", "run_id": run_id, "message": "Background batch scoring queued in Huey."}
 
 @app.get("/api/jobs/{id}/insights")
 def get_job_insights(id: int):
@@ -674,6 +725,15 @@ def queue_outreach_emails(payload: OutreachQueuePayload):
     if len(payload.contact_ids) != len(payload.job_ids):
         raise HTTPException(status_code=400, detail="contact_ids and job_ids list lengths must match.")
         
+    from src import outreach
+    prefs = config.load_prefs()
+    used, cap = outreach.usage_today(prefs)
+    if used >= cap:
+        raise HTTPException(status_code=429, detail=f"Daily outreach cap of {cap} has been reached ({used}/{cap} used today).")
+    if used + len(payload.contact_ids) > cap:
+        allowed = cap - used
+        raise HTTPException(status_code=429, detail=f"Queueing {len(payload.contact_ids)} contacts would exceed daily cap ({used}/{cap} used today, only {allowed} remaining).")
+
     from src.tasks import process_outreach_queue_task
     process_outreach_queue_task(
         payload.contact_ids,
@@ -682,6 +742,46 @@ def queue_outreach_emails(payload: OutreachQueuePayload):
         payload.extra_notes
     )
     return {"status": "success", "message": f"Outreach queue scheduled in Huey for {len(payload.contact_ids)} contacts."}
+
+@app.post("/api/outreach/{outreach_id}/approve")
+def approve_outreach_email(outreach_id: int):
+    """Approve an outreach draft in the queue (HITL guardrail)."""
+    item = db.get_outreach(outreach_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Outreach item not found.")
+    db.update_outreach(outreach_id, "approved")
+    return {"status": "success", "id": outreach_id, "new_status": "approved"}
+
+@app.post("/api/outreach/{outreach_id}/reject")
+def reject_outreach_email(outreach_id: int):
+    """Reject an outreach draft in the queue."""
+    item = db.get_outreach(outreach_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Outreach item not found.")
+    db.update_outreach(outreach_id, "rejected")
+    return {"status": "success", "id": outreach_id, "new_status": "rejected"}
+
+@app.get("/api/mock_interview/{job_id}", dependencies=[Depends(ai_limiter)])
+def generate_mock_interview(job_id: int, num_questions: int = 4):
+    """Generate interactive technical mock interview questions for a job."""
+    if not config.provider_ready():
+        raise HTTPException(status_code=400, detail="AI Key or Ollama local server not ready. Configure in Setup.")
+    job = db.get_job(job_id)
+    profile = config.load_profile()
+    if not job or not profile:
+        raise HTTPException(status_code=404, detail="Job or Profile not found.")
+    try:
+        from src import mock_interviewer
+        questions = mock_interviewer.generate_interview_questions(job, profile, num_questions)
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "role": job.get("title"),
+            "company": job.get("company"),
+            "questions": questions,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/outreach/{job_id}/generate")
 def generate_sequence_email(job_id: int, followup_number: int = 1, days_since_apply: int = 7):

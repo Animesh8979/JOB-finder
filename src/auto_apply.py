@@ -11,9 +11,40 @@ try:
 except ImportError:
     pass  # Will be caught when function is called if not installed
 
-from src import llm, config
+from src import llm, config, db
+import uuid
+import threading
 
 logger = logging.getLogger(__name__)
+
+_global_apply_lock = threading.Lock()
+_active_session_job = None
+
+class ApplicationSession:
+    """Mutex enforcing single-active application session to prevent browser profile corruption."""
+    def __init__(self, job_id: int, run_id: str = "manual_apply"):
+        self.job_id = job_id
+        self.run_id = run_id
+        self.lock_token = str(uuid.uuid4())
+        self._acquired = False
+
+    def acquire(self) -> bool:
+        global _active_session_job
+        with _global_apply_lock:
+            if _active_session_job is not None:
+                return False
+            _active_session_job = self.job_id
+            self._acquired = True
+            db.create_application_session(self.lock_token, self.job_id, self.run_id, "acquired", None)
+            return True
+
+    def release(self) -> None:
+        global _active_session_job
+        with _global_apply_lock:
+            if self._acquired and _active_session_job == self.job_id:
+                _active_session_job = None
+                self._acquired = False
+                db.update_application_session(self.lock_token, status="released")
 
 # --- Prompt-injection defense ---
 # Selectors returned by the LLM (over attacker-influenced DOM) are passed to

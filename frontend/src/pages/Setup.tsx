@@ -36,9 +36,9 @@ export default function Setup({ onStatusChange }: SetupProps) {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!profile) fetchProfile();
     if (!prefs) fetchPrefs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
