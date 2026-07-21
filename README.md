@@ -1,103 +1,76 @@
-# 🎯 Remote Job Application Copilot
+# 🎯 AI Job Finder Command Center
 
-A friendly assistant that runs **on your own computer** and does the tedious parts of a
-remote job search for you:
+A high-performance, local-first AI assistant that automates the tedious parts of a remote job search while keeping you in complete control.
+
+With the newly completely overhauled **React Command Center**, the system provides a cinematic, single-page application experience to manage your entire job hunt.
 
 1. **Finds** remote jobs from free, official job APIs (no scraping, no risky bots).
-2. **Scores** each job against your resume so you only spend time on good matches.
-3. **Tailors** your resume and writes a **custom cover letter** for any job.
+2. **Scores** each job against your resume so you only spend time on the best matches.
+3. **Tailors** your resume and writes a custom cover letter for any job.
 4. **Pre-fills the application** in a real browser — then *you* review and click **Submit**.
-5. **Drafts** personalized, polite emails to recruiters you choose (never auto-sent).
-6. **Tracks** everything: where you applied, the status, and follow-up reminders.
+5. **Drafts** personalized outreach emails to recruiters (never auto-sent).
+6. **Tracks** everything in a unified dashboard.
 
-> ### 🔒 The one rule that protects you
-> This is **review-first**. The tool *prepares* everything, but **you** make the final click
-> to submit an application or send an email. That's deliberate — fully automatic
-> "apply to everything / email everyone" bots get your **LinkedIn account banned** and your
-> **email address blacklisted**. This tool is built so that never happens to you.
+> ### 🔒 The Review-First Principle
+> This tool is **review-first**. The AI prepares everything, but **you** make the final click to submit an application or send an email. Fully automatic bots can get your LinkedIn account banned and email blacklisted. This tool ensures you remain safe, credible, and in control.
 
 ---
 
-## ✅ What you need
+## ✅ Prerequisites
 
 - A Windows PC.
-- One AI key (free options available — see below). Everything else is free.
-- Your resume as a **PDF** or **Word (.docx)** file.
+- An AI API key (Gemini or Anthropic Claude).
+- Your resume in a standard format (PDF or DOCX).
 
 ---
 
-## 🚀 Setup (two steps)
+## 🚀 Quick Start
 
-1. **Double-click `setup.bat`.**
-   It installs everything automatically (Python, libraries, a browser). The first run can
-   take a few minutes. When it says *"Setup complete"*, you're done.
+1. **Run `run.bat`**
+   Double-click `run.bat` in the root folder. This script will automatically:
+   - Start the FastAPI backend server (port 8000).
+   - Start the Huey background workers for asynchronous tasks.
+   - Start the Vite React frontend (port 5173).
+   - Open your browser to the Command Center.
 
-2. **Double-click `run.bat`.**
-   The app opens in your web browser. To stop it later, just close the black window.
-
-That's it. Leave both `.bat` files where they are.
-
----
-
-## 🔑 Getting your AI key
-
-The app uses AI to read your resume, score jobs, and write documents. Pick one:
-
-- **Claude (recommended).** Go to <https://console.anthropic.com/settings/keys>, create a
-  key, and paste it into the app's **Home & Setup** page. Cost is tiny — roughly a few cents
-  per job (often less). Add a small amount of credit and it lasts a long time.
-- **Gemini (free tier).** Go to <https://aistudio.google.com/apikey>, create a key. On the
-  Setup page choose **Gemini**, paste the key, then run this once in the black window:
-  `\.venv\Scripts\python -m pip install google-generativeai`
-
-You only ever enter the key once, on the **Home & Setup** page.
+2. **Setup Your Profile**
+   In the Command Center, click the **Profile** button in the command bar (user icon). 
+   - Add your API key.
+   - Upload your resume (the AI will parse it automatically).
+   - Save your settings.
 
 ---
 
-## 🧭 How to use it (the 6 pages)
+## 🧭 The Command Center Experience
 
-| Page | What it does |
-|------|--------------|
-| **🏠 Home & Setup** | Connect the AI, enter your name/contact, upload your resume, set what jobs you want. |
-| **🔎 Find jobs** | Pull fresh remote jobs and let the AI rank them 1–10 against your resume. Save the good ones. |
-| **✍️ Tailor** | For a saved job, generate a tailored resume + cover letter. Preview, tweak, download. |
-| **📤 Apply** | Opens the application page in a browser and pre-fills it. **You review and submit.** |
-| **✉️ Outreach** | Paste a recruiter's email (one you found yourself), get a personalized draft. **Drafts only.** |
-| **📊 Tracker** | Every job, its status, and reminders to follow up. |
+Everything happens in a single, unified view:
 
-A normal flow: **Setup → Find jobs → save matches → Tailor → Apply → (optional) Outreach → Tracker.**
+- **Live Intel Feed**: See new jobs flow in real-time. Use the **Command Bar** to filter by minimum score, remote-only status, or specific keywords.
+- **Slide-Over Drawers**: 
+  - **Job Detail**: Click any job to view deep insights, missing skills, and the AI recruiter's score breakdown.
+  - **Tailor Drawer**: Generate a custom, hyper-optimized resume and cover letter.
+  - **Prepare Apply**: Let the local browser automation fill out the ATS forms for you securely.
+  - **Settings/Profile**: Manage your identity and API keys.
+- **Pipeline Status Panel**: Monitor active background tasks (searches, tailoring, audits) running asynchronously in the background.
 
 ---
 
-## 💾 Where your data lives
+## 💾 Data Privacy & Storage
 
 Everything stays in the `data/` folder on your computer:
-- `profile.json` — your resume, parsed into a profile.
-- `jobfinder.db` — saved jobs, applications, contacts, tracker.
-- `outputs/` — the resumes and cover letters it generates.
-- `secrets.json` / `.env` — your API keys (never shared, never committed to git).
+- `data/profiles/default.json` — your resume, parsed into an AI-readable profile.
+- `data/jobs.db` — local SQLite database storing all jobs and applications.
+- `data/huey.db` — local SQLite database managing background task queues.
+- `data/bot_profile/` — local isolated browser profile for secure automation.
 
-Nothing is uploaded anywhere except the AI requests you trigger.
-
----
-
-## 🆘 Troubleshooting
-
-- **`setup.bat` closed too fast / showed an error.** Right-click it → *Run as administrator*,
-  or read the last lines in the window. Most issues are a missing internet connection.
-- **"No AI key set."** Open **Home & Setup** and paste your key, then click *Test AI connection*.
-- **The browser tab didn't open.** Look in the black window for a line like
-  `Local URL: http://localhost:8501` and open that address yourself.
-- **Apply page can't fill a site.** Some application forms are unusual. The tool will give you
-  a ready-to-paste answer sheet instead so you can fill it in seconds.
+**Nothing is uploaded anywhere except the explicit AI requests you trigger.**
 
 ---
 
 ## ⚖️ What this tool deliberately will *not* do (and why)
 
-- ❌ Auto-submit on LinkedIn/Indeed or scrape them → that gets **your** account banned.
-- ❌ Harvest recruiter emails or mass-blast them → that's spam; it kills your email reputation
-  and can break the law (CAN-SPAM / GDPR). Outreach here is targeted, capped, and drafts-only.
-- ❌ Invent experience to match a job → it only re-words and re-emphasizes **your real** background.
+- ❌ Auto-submit on LinkedIn/Indeed or scrape gated domains → that gets **your** account banned.
+- ❌ Mass-blast recruiter emails → that's spam and destroys your email reputation. Outreach is targeted and drafts-only.
+- ❌ Invent fake experience → the AI strictly re-words and re-emphasizes **your real** background to match the job description.
 
-These protections keep your accounts safe and your applications credible.
+These protections keep your accounts safe, your applications credible, and your data local.
