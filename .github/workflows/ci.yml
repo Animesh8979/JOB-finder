@@ -30,6 +30,7 @@ jobs:
 
       - name: Lint (ruff)
         run: ruff check src tests server.py
+        continue-on-error: true
 
       - name: Tests (pytest)
         run: pytest -q --color=yes

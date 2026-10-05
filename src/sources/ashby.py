@@ -117,7 +117,7 @@ def fetch(
                 if len(jobs_out) >= limit:
                     return jobs_out
 
-        except Exception as e:
+        except Exception:
             # Gracefully continue to next board if a slug fails
             continue
 

@@ -1,9 +1,8 @@
 """Parametric test suite for Career Intelligence OS modules."""
 from __future__ import annotations
 
-import pytest
-from src.ats_simulator import simulate_adversarial_ats, _extract_ngrams
-from src.salary_arbitrage import calculate_compa_ratio, get_market_benchmark
+from src.ats_simulator import simulate_adversarial_ats
+from src.salary_arbitrage import calculate_compa_ratio
 from src.sources import ashby, greenhouse, lever
 
 

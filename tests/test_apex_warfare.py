@@ -17,9 +17,6 @@ Covers:
 """
 from __future__ import annotations
 
-import os
-import pytest
-from pathlib import Path
 
 
 def test_system_one_primitives():

@@ -5,7 +5,6 @@ import pytest
 from fastapi.testclient import TestClient
 from server import app
 from src.run_manager import get_run_manager
-from src import db
 
 @pytest.fixture
 def client():

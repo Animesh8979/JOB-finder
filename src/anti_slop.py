@@ -7,8 +7,8 @@ Ensures application materials sound like a sharp, authentic, grounded human buil
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from dataclasses import dataclass
+from typing import List, Tuple
 
 
 # Cliché AI buzzwords and phrases mapped to natural human alternatives

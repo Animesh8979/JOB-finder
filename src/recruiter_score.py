@@ -373,9 +373,6 @@ def score_job(
 
     # --- 1. Skills (max 30) ---
     cand_skills = {s.strip().lower() for s in (profile.get("skills") or []) if s and s.strip()}
-    summary_text = str(profile.get("summary") or profile.get("raw_text") or "").lower()
-    for s in cand_skills:
-        pass  # cand_skills set built
 
     job_text = f"{job.get('title', '')} {job.get('description', '')} {' '.join(job.get('tags') or [])}".lower()
     hits = sum(1 for s in cand_skills if s in job_text)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import adzuna, arbeitnow, base, himalayas, jobicy, remoteok, remotive
+from . import adzuna, arbeitnow, himalayas, jobicy, remoteok, remotive
 from . import greenhouse, lever, weworkremotely, hackernews, ashby, builtin
 from . import wellfound, otta, themuse, usajobs, dice, simplyhired, careerbuilder, monster
 from . import jobspy_adapter

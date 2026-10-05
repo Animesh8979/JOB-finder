@@ -13,7 +13,6 @@ Unifies the full autonomous lifecycle into a cohesive, self-improving pipeline:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -24,7 +23,6 @@ from typing import Any, Dict, List, Optional
 from . import (
     config,
     db,
-    llm,
     forensic_filter,
     shadow_tournament,
     browser_agent,

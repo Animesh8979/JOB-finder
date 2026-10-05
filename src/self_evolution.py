@@ -13,7 +13,6 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import config
@@ -69,7 +68,7 @@ class SelfEvolutionEngine:
         try:
             self.LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
             data = {
-                "lessons": [asdict(l) for l in self.lessons],
+                "lessons": [asdict(lesson) for lesson in self.lessons],
                 "patches": [asdict(p) for p in self.patches]
             }
             self.LEDGER_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -174,6 +173,6 @@ class SelfEvolutionEngine:
             "total_lessons_learned": len(self.lessons),
             "total_patches_synthesized": len(self.patches),
             "verified_patches": sum(1 for p in self.patches if p.is_verified),
-            "recent_lessons": [asdict(l) for l in self.lessons[-5:]],
+            "recent_lessons": [asdict(lesson) for lesson in self.lessons[-5:]],
             "recent_patches": [asdict(p) for p in self.patches[-5:]]
         }

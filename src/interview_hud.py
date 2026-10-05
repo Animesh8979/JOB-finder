@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from . import story_bank, system_one
+from . import story_bank
 
 logger = logging.getLogger(__name__)
 

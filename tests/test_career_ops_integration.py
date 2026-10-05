@@ -1,8 +1,7 @@
 """Comprehensive integration tests for CareerOps features and security hardening."""
-import pytest
 from src.legitimacy_filter import check_posting_legitimacy
 from src.insights import evaluate_job_ag_blocks
-from src.tailor import generate_strategic_cover_letter, COVER_LETTER_ANGLES
+from src.tailor import COVER_LETTER_ANGLES
 from src.persona_outreach import generate_persona_outreach
 from src.story_bank import auto_extract_stories_from_profile, generate_reverse_interview_questions
 from src.offer_analyzer import audit_offer_contract, analyze_salary_gap

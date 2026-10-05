@@ -1,6 +1,5 @@
 import os
 import pytest
-from pathlib import Path
 
 # Globally force test mode BEFORE any app code is imported
 os.environ["JOBFINDER_TEST_MODE"] = "1"
@@ -43,7 +42,7 @@ def db_isolation(monkeypatch, tmp_path):
     if hasattr(db._local, "conn") and db._local.conn is not None:
         try:
             db._local.conn.close()
-        except:
+        except Exception:
             pass
         delattr(db._local, "conn")
         
@@ -55,6 +54,6 @@ def db_isolation(monkeypatch, tmp_path):
     if hasattr(db._local, "conn") and db._local.conn is not None:
         try:
             db._local.conn.close()
-        except:
+        except Exception:
             pass
         delattr(db._local, "conn")

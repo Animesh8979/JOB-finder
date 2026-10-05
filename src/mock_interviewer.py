@@ -6,7 +6,6 @@ Supports local GGUF models via Ollama (zero-cost, zero-key, private).
 """
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from typing import Any

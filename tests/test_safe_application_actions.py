@@ -1,6 +1,3 @@
-import pytest
-import os
-import json
 from src.ats_engines.schemas import load_schema, is_action_allowed, is_field_allowed
 from src.auto_apply import ApplicationSession
 

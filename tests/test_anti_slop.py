@@ -1,5 +1,4 @@
 """Unit tests for Anti-AI-Slop & Humanizer Engine."""
-import pytest
 from src.anti_slop import audit_and_sanitize, sanitize_punctuation, sanitize_bullet, calculate_burstiness
 
 def test_em_dash_elimination():

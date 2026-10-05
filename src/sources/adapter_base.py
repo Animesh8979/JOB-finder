@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 
 class CancellationToken:

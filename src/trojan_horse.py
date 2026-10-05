@@ -9,9 +9,8 @@ Pipeline:
 from __future__ import annotations
 
 import logging
-import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List
 
 from .anti_slop import audit_and_sanitize
 
@@ -245,7 +244,7 @@ Best regards,
 {candidate_name}
 """
         else:
-            reproduction = f"""# reproduction_bench.py
+            reproduction = """# reproduction_bench.py
 # Simulates bursty payload allocation
 import time
 
@@ -255,7 +254,7 @@ def simulate_burst():
     for _ in range(100_000):
         buffer.append(b"\\x00" * 4096)
     elapsed = time.perf_counter() - start
-    print(f"Allocated {{len(buffer)}} buffers in {{elapsed:.4f}}s")
+    print(f"Allocated {len(buffer)} buffers in {elapsed:.4f}s")
 
 if __name__ == "__main__":
     simulate_burst()

@@ -58,11 +58,9 @@ def build_catalog(force: bool = False) -> List[Dict[str, Any]]:
 
         name = entry.name
         desc = ""
-        lines_count = 0
         try:
             with open(skill_md, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read(2048)
-                lines_count = content.count("\n")
 
             if content.startswith("---"):
                 parts = content.split("---", 2)

@@ -8,7 +8,6 @@ Implements:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 from . import config, llm
 from .profile_parser import profile_context

@@ -1,5 +1,4 @@
 """End-to-End Autonomous Audit -> GitHub Evidence Ledger -> Multi-ATS -> Auto-Apply Staging Loop Test."""
-import json
 from src.autonomous_resume_agent import audit_and_autofix_resume
 
 

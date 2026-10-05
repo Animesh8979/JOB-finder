@@ -7,12 +7,10 @@ Inspired by career-ops generate-pdf.mjs:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 import jinja2
 
-from . import config
 
 
 def render_html_resume(resume_dict: dict[str, Any], template_name: str = "resume_modern.html") -> str:
@@ -57,7 +55,7 @@ def generate_modern_pdf(
                 margin={"top": "12mm", "bottom": "12mm", "left": "14mm", "right": "14mm"}
             )
             browser.close()
-    except Exception as e:
+    except Exception:
         # Fallback to fpdf2 / documents.py
         from . import documents
         documents.save_resume_pdf(resume_dict, output_path)

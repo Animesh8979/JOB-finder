@@ -307,7 +307,6 @@ _COOLDOWNS: dict[str, float] = {}
 
 def _get_auto_pool() -> list[dict[str, str]]:
     """Returns list of active keys live from .env."""
-    import os
     from dotenv import dotenv_values
     
     # Read live from .env so no restart is required

@@ -1,5 +1,4 @@
 """Tests for Autonomous Resume Agent (HackerRank ATS + GitHub API enrichment + Auto-fix)."""
-import pytest
 from src import autonomous_resume_agent
 
 

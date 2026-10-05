@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import socket
 import sys
 import threading
@@ -18,15 +17,14 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Dict
 
-import pytest
 
 # Ensure root directory is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src import anti_slop, config, cv_builder, db, forensic_filter, matcher, tailor
-from src.browser_agent import AutonomousBrowserAgent, BrowserAgentResult
+from src import anti_slop, config, cv_builder, db, forensic_filter, matcher, tailor  # noqa: E402
+from src.browser_agent import AutonomousBrowserAgent, BrowserAgentResult  # noqa: E402
 
 logger = logging.getLogger("swat_tester")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -358,8 +356,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("SWAT SPECIALIST 2: E2E DRY-RUN & ANTI-SLOP STRESS TEST COMPLETE")
     print("=" * 80)
-    print(f"Status: ALL GATES PASSED (Exit Code 0)")
-    print(f"Timing Breakdown:")
+    print("Status: ALL GATES PASSED (Exit Code 0)")
+    print("Timing Breakdown:")
     for k, v in results["metrics"].items():
         print(f"  - {k}: {v}")
     print("=" * 80)

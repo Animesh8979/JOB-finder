@@ -11,9 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
-from . import db, llm
 
 
 @dataclass
@@ -201,13 +199,13 @@ class BackchannelPathfinder:
         if technical_artefact_url:
             body_lines.append(f"Here is the open-source blueprint / repo: {technical_artefact_url}")
         else:
-            body_lines.append(f"Happy to share a 1-page architecture breakdown if you're wrestling with this right now.")
+            body_lines.append("Happy to share a 1-page architecture breakdown if you're wrestling with this right now.")
 
         body_lines.extend([
             "",
             "Zero pressure and no reply needed if your sprint is packed. Either way, love what the team is building.",
             "",
-            f"Best,",
+            "Best,",
             candidate_name
         ])
 

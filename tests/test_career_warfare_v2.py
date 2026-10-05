@@ -1,11 +1,10 @@
 """Comprehensive Verification Suite for Career Warfare V2, Browser Agent, and Desktop Fallback."""
-import asyncio
 from pathlib import Path
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 from src.browser_agent import AutonomousBrowserAgent, BrowserAgentResult
-from src.desktop_agent import DesktopComputerUseAgent, DesktopActionResult
+from src.desktop_agent import DesktopComputerUseAgent
 from src.career_agent import CareerAgentOrchestrator, CareerPipelineConfig
 from src.forensic_filter import ForensicFilter
 from src.trojan_horse import TrojanHorseEngine, ProblemSignature
@@ -227,8 +226,7 @@ async def test_career_agent_pipeline_conservative():
 
 @pytest.mark.asyncio
 async def test_browser_agent_async_form_fill():
-    from pathlib import Path
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import AsyncMock
 
     agent = AutonomousBrowserAgent(headless=True)
     mock_page = AsyncMock()

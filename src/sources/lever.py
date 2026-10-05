@@ -98,7 +98,7 @@ def fetch(
                 if len(jobs_out) >= limit:
                     return jobs_out
 
-        except Exception as e:
+        except Exception:
             continue
 
     return jobs_out

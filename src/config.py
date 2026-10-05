@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from dotenv import load_dotenv
@@ -287,7 +288,6 @@ def list_profiles() -> list[str]:
     """Return names of all saved profile files."""
     return [p.stem for p in PROFILES_DIR.glob("*.json")]
 
-import re
 
 def _validate_profile_name(name: str) -> str:
     """Ensure name doesn't contain path traversal characters."""

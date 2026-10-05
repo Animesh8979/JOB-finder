@@ -14,15 +14,12 @@ Capabilities:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import re
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import config, llm, db
+from . import config
 from .stealth_browser import launch_async as stealth_launch_async
 
 logger = logging.getLogger(__name__)
@@ -223,7 +220,7 @@ class AutonomousBrowserAgent:
     ) -> BrowserAgentResult:
         """Executes full end-to-end autonomous navigation and form filling."""
         from contextlib import AsyncExitStack
-        from . import autofill_runner, telemetry_bandit
+        from . import telemetry_bandit
         from .scraper import validate_url_for_ssrf
 
         # SSRF Security Gate (permits loopback when test mode is enabled)
@@ -310,8 +307,10 @@ class AutonomousBrowserAgent:
                     if isinstance(profile_links, list):
                         links_dict = {}
                         for lk in profile_links:
-                            if "linkedin" in lk: links_dict["linkedin"] = lk
-                            elif "github" in lk: links_dict["github"] = lk
+                            if "linkedin" in lk:
+                                links_dict["linkedin"] = lk
+                            elif "github" in lk:
+                                links_dict["github"] = lk
                         profile_links = links_dict
 
                     name_val = profile_data.get("name", "")

@@ -1,6 +1,4 @@
-import pytest
 from src.recruiter_score import score_job
-from src.matcher import score_jobs
 
 def test_score_job_rubric_breakdown():
     job = {

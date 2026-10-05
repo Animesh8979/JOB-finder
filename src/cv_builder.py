@@ -284,9 +284,11 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
         linkedin = raw_links.get("linkedin", "")
         github = raw_links.get("github", "")
     elif isinstance(raw_links, list):
-        for l in raw_links:
-            if "linkedin.com" in l: linkedin = l
-            elif "github.com" in l: github = l
+        for link_item in raw_links:
+            if "linkedin.com" in link_item:
+                linkedin = link_item
+            elif "github.com" in link_item:
+                github = link_item
 
     contacts = [c for c in [email, phone, location, linkedin, github] if c]
     contact_str = " | ".join(contacts)

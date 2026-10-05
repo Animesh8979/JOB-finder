@@ -81,7 +81,7 @@ def calculate_compa_ratio(
         assessment = f"Competitive offer aligned with industry median ($${int(p50):,}). Focus negotiation on equity grants and signing bonus."
     elif ratio <= 125.0:
         tier = "Above Market Midpoint"
-        assessment = f"Strong compensation tier (P75+). Good target for immediate acceptance."
+        assessment = "Strong compensation tier (P75+). Good target for immediate acceptance."
     else:
         tier = "Top of Market (Elite Band)"
         assessment = "Outlier high compensation exceeding P90 benchmarks. High bar expected in technical loop."
