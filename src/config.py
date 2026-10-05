@@ -31,14 +31,13 @@ SECRETS_PATH = DATA_DIR / "secrets.json"
 FERNET_KEY_PATH = DATA_DIR / ".fernet_key"
 ENV_PATH = ROOT / ".env"
 
-# Avoid import-time side-effects during tests
-if not os.environ.get("JOBFINDER_TEST_MODE"):
-    # Ensure data directories exist on import.
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+# Ensure data directories exist on import so sqlite can always create the database.
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load .env if present (used only as a fallback for secrets).
+# Avoid loading real .env secrets during tests
+if not os.environ.get("JOBFINDER_TEST_MODE"):
     load_dotenv(ENV_PATH)
 
 

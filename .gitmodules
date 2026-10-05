@@ -1,0 +1,3 @@
+[submodule ".agents/skills/gsd"]
+	path = .agents/skills/gsd
+	url = https://github.com/gsd-build/get-shit-done.git

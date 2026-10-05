@@ -33,6 +33,8 @@ _local = threading.local()
 class _CursorManager:
     def __init__(self, row_factory=sqlite3.Row, readonly: bool = False):
         if not hasattr(_local, "conn"):
+            # Ensure database directory exists before connecting
+            config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
             # We enforce auto-commit behavior (isolation_level=None) to manage transactions manually
             _local.conn = sqlite3.connect(config.DB_PATH, timeout=10.0, isolation_level=None)
             # Strict mitigations for concurrency
@@ -86,6 +88,7 @@ def get_cursor(row_factory=sqlite3.Row, readonly: bool = False):
 
 def init_db() -> None:
     """Create tables if they do not exist. Safe to call on every launch."""
+    config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _CursorManager() as cur:
         cur.execute(
             """
