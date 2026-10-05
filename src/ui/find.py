@@ -162,7 +162,18 @@ def render() -> None:
                 except Exception:
                     pass
 
-            top[0].caption(f"📍 {job['location']}  ·  source: {job['source']}{fresh_badge}")
+            # Legitimacy & Ghost-Job Check (Block G)
+            from .. import legitimacy_filter
+            legit = legitimacy_filter.check_posting_legitimacy(job, prefs)
+            legit_badge = "🛡️ Legit (100%)" if legit["legitimacy_score"] >= 80 else f"⚠️ Legit: {legit['legitimacy_score']}%"
+            if legit["is_scam"]:
+                legit_badge = "🚨 Scam Risk Detected"
+            elif legit["work_auth_blocked"]:
+                legit_badge = "🚫 Work-Auth Blocked"
+            elif legit["is_ghost_job"]:
+                legit_badge = "👻 Ghost-Job Signal"
+
+            top[0].caption(f"📍 {job['location']}  ·  source: {job['source']}{fresh_badge}  ·  {legit_badge}")
             top[1].markdown(_score_badge(job.get("match_score")))
             if app:
                 top[2].success(f"✓ {app['status']}")
@@ -182,15 +193,26 @@ def render() -> None:
                     for category, phrases in flags.items():
                         st.write(f"**{category}**: {', '.join(phrases)}")
 
-            with st.expander("Description & link"):
-                c_links = st.columns(2)
+            if legit["signals"]:
+                with st.expander(f"🛡️ Block G Legitimacy Details ({legit['risk_level']})"):
+                    for sig in legit["signals"]:
+                        st.write(f"- **[{sig['severity']}] {sig['category']}**: {sig['note']}")
+
+            with st.expander("Description & Strategic Tools"):
+                c_links = st.columns(3)
                 if job.get("apply_url"):
-                    c_links[0].markdown(f"[🔗 Open the job posting]({job['apply_url']})")
+                    c_links[0].markdown(f"[🔗 Open posting]({job['apply_url']})")
                 
                 # Warm Intro Finder (LinkedIn X-Ray)
                 company_enc = urllib.parse.quote(f'"{job["company"]}" (recruiter OR talent OR hiring)')
                 xray_url = f"https://www.google.com/search?q=site:linkedin.com/in+{company_enc}"
-                c_links[1].markdown(f"[🤝 Find Recruiters on LinkedIn]({xray_url})")
+                c_links[1].markdown(f"[🤝 LinkedIn Recruiters]({xray_url})")
+
+                # CareerOps 7-Block Evaluation
+                if c_links[2].button("📊 A–G Rubric Eval", key=f"ag_eval_{job['id']}"):
+                    with st.spinner("Generating 7-Block evaluation..."):
+                        ag_report = insights.evaluate_job_ag_blocks(job, config.load_profile(), prefs)
+                        st.json(ag_report)
                 
                 if st.button("💰 Estimate Salary", key=f"salary_{job['id']}"):
                     with st.spinner("Analyzing salary data..."):

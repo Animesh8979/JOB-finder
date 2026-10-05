@@ -33,3 +33,4 @@ scratch/
 *.db
 *.sqlite
 test_mitigation.db
+frontend/test-results/

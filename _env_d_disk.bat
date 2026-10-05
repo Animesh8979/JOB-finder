@@ -23,6 +23,10 @@ REM Playwright browser binaries (also set in setup.bat - kept here so
 REM run.bat-only invocations don't try to download Chromium to C:).
 if "%PLAYWRIGHT_BROWSERS_PATH%"=="" set "PLAYWRIGHT_BROWSERS_PATH=%~dp0data\playwright_browsers"
 
+REM Camoufox anti-detect browser (src/stealth_browser.py) - payload lives on D:.
+REM Honored by python -m src.stealth_browser --fetch AND by every launch.
+if "%CAMOUFOX_INSTALL_DIR%"=="" set "CAMOUFOX_INSTALL_DIR=%~dp0data\camoufox"
+
 REM pip download cache - keeps the wheel cache off C:
 if "%PIP_CACHE_DIR%"==""      set "PIP_CACHE_DIR=%~dp0data\pip_cache"
 
@@ -36,6 +40,7 @@ if not exist "%TRANSFORMERS_CACHE%" mkdir "%TRANSFORMERS_CACHE%"
 if not exist "%XDG_CACHE_HOME%"      mkdir "%XDG_CACHE_HOME%"
 if not exist "%TORCH_HOME%"         mkdir "%TORCH_HOME%"
 if not exist "%PLAYWRIGHT_BROWSERS_PATH%" mkdir "%PLAYWRIGHT_BROWSERS_PATH%"
+if not exist "%CAMOUFOX_INSTALL_DIR%" mkdir "%CAMOUFOX_INSTALL_DIR%"
 if not exist "%PIP_CACHE_DIR%"      mkdir "%PIP_CACHE_DIR%"
 if not exist "%NPM_CONFIG_CACHE%"   mkdir "%NPM_CONFIG_CACHE%"
 

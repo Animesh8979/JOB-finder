@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import type { Variants } from 'framer-motion';
 import ResumeEditor from '../components/ResumeEditor';
 import RecruiterScoreCard from '../components/RecruiterScoreCard';
+import StealthEngineCard from '../components/StealthEngineCard';
 import { useAppStore } from '../store/useAppStore';
 import { apiFetch } from '../utils/api';
 
@@ -166,6 +167,11 @@ export default function Setup({ onStatusChange }: SetupProps) {
           <RecruiterScoreCard hero />
         </motion.div>
       )}
+
+      {/* Stealth engine status — read-only view of src/stealth_browser.py state */}
+      <motion.div variants={itemVariants}>
+        <StealthEngineCard />
+      </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left column: Resume upload & parsed view */}

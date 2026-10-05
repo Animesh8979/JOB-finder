@@ -16,8 +16,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from urllib.parse import urlparse
 import asyncio
 
-from src import config, db, profile_parser, scraper, matcher, insights, tailor, contacts_enricher, autonomous_resume_agent, api_v2, run_manager
-from src.recruiter_score import score as recruiter_score, ScoreReport as _RecruiterScoreReport
+from src import config, db, profile_parser, scraper, matcher, insights, tailor, contacts_enricher, autonomous_resume_agent, api_v2, run_manager, skills_catalog
+from src.recruiter_score import score as recruiter_score
 
 # Initialize Database
 db.init_db()
@@ -96,16 +96,30 @@ async def strict_localhost_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
 
-    # Require origin or referer for state mutating methods
-    if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+    # Require origin or referer for state mutating methods and SSE event streams
+    if request.method in ["POST", "PUT", "DELETE", "PATCH"] or request.url.path.startswith("/api/stream"):
         if not origin and not referer:
-            return JSONResponse(status_code=403, content={"detail": "Cross-Site Request Forbidden by Anti-CSRF policy: Missing Origin/Referer."})
+            # Allow direct curl or same-host browser navigation without origin/referer for GET if no origin header
+            if request.method == "GET" and not origin and not referer:
+                client_host = request.client.host if request.client else ""
+                if client_host not in ("127.0.0.1", "localhost", "::1", "testclient"):
+                    return JSONResponse(status_code=403, content={"detail": "Forbidden: SSE stream restricted to local clients."})
+            else:
+                return JSONResponse(status_code=403, content={"detail": "Cross-Site Request Forbidden by Anti-CSRF policy: Missing Origin/Referer."})
 
         # Same-site request: origin OR referer must pinpoint a permitted local
         # origin AND it must include an explicit port. Bare "http://localhost"
         # or "http://127.0.0.1" without a port is rejected — anything we serve
         # binds a port. This blocks crafted pages on an unexpected host header.
         valid_local_port = {"5173", "8000", "3000"}  # dev + prod defaults
+        # The server's own bind port is always valid, whatever it is: a UI
+        # served from http://127.0.0.1:<own-port> must not 403 on its own SSE
+        # just because the port isn't one of the defaults (e.g. custom :8017).
+        host_header = request.headers.get("host") or ""
+        if ":" in host_header:
+            own_port = host_header.rsplit(":", 1)[1]
+            if own_port.isdigit():
+                valid_local_port = valid_local_port | {own_port}
         matched = False
         for val in filter(None, [origin, referer]):
             try:
@@ -182,6 +196,25 @@ class DiscoverPayload(BaseModel):
     search_term: str
     location: str
     results_wanted: int = 20
+
+class ContractAuditPayload(BaseModel):
+    contract_text: str
+
+class SalaryGapPayload(BaseModel):
+    offered_base: int
+    desired_base: int
+    market_median: int
+    currency: str = "USD"
+
+class InboundReplyPayload(BaseModel):
+    job_id: int
+    email_text: str
+
+class StrategicCoverPayload(BaseModel):
+    job_id: int
+    angle: str = "vision"
+    tone: str = "Professional"
+    extra_notes: str = ""
 
 # --- API Endpoints ---
 app.include_router(api_v2.router)
@@ -286,6 +319,57 @@ def autonomous_resume_upgrade():
     prefs = config.load_prefs()
     result = autonomous_resume_agent.audit_and_autofix_resume(prof, prefs)
     return result
+
+@app.get("/api/skills")
+def list_skills(search: Optional[str] = None, category: Optional[str] = None):
+    """Retrieve cataloged Antigravity skills from D:\\skills-library."""
+    return skills_catalog.get_skills(search=search, category=category)
+
+@app.get("/api/skills/{skill_id}")
+def get_skill(skill_id: str):
+    """Retrieve detailed documentation and SKILL.md content for a skill."""
+    detail = skills_catalog.get_skill_detail(skill_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return detail
+
+@app.post("/api/skills/refresh")
+def refresh_skills():
+    """Force re-index of D:\\skills-library."""
+    skills = skills_catalog.build_catalog(force=True)
+    return {"status": "refreshed", "total": len(skills)}
+
+@app.get("/api/jobs/{job_id}/ats_breakdown")
+def get_job_ats_breakdown(job_id: int):
+    """Run adversarial ATS simulation against candidate profile for a specific job."""
+    from src.ats_simulator import simulate_adversarial_ats
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job #{job_id} not found")
+
+    prof = config.load_profile() or db.get_profile() or {}
+    resume_text = prof.get("raw_text") or prof.get("summary") or ""
+    if not resume_text and prof.get("skills"):
+        resume_text = f"Skills: {', '.join(prof.get('skills', []))}. Experience in software engineering."
+
+    jd_text = job.get("description") or job.get("title") or ""
+    return simulate_adversarial_ats(job_description=jd_text, resume_text=resume_text)
+
+@app.get("/api/jobs/{job_id}/salary_arbitrage")
+def get_job_salary_arbitrage(job_id: int):
+    """Calculate compa-ratio and salary negotiation leverage for a specific job."""
+    from src.salary_arbitrage import calculate_compa_ratio
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job #{job_id} not found")
+
+    return calculate_compa_ratio(
+        salary_min=job.get("salary_min"),
+        salary_max=job.get("salary_max"),
+        job_title=job.get("title", ""),
+        location=job.get("location"),
+        currency=job.get("currency") or "USD"
+    )
 
 @app.get("/api/profiles")
 def list_profiles():
@@ -803,11 +887,146 @@ def get_dashboard_stats():
     """Fetch Kanban funnel metrics."""
     return db.application_stats()
 
+# --- CareerOps Extension Endpoints ---
+
+@app.get("/api/jobs/{job_id}/ag-eval", dependencies=[Depends(ai_limiter)])
+def get_ag_evaluation(job_id: int):
+    """Run full 7-block (A-G) evaluation on a job listing."""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    profile = config.load_profile() or {}
+    prefs = config.load_prefs()
+    
+    try:
+        report = insights.evaluate_job_ag_blocks(job, profile, prefs)
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/jobs/{job_id}/legitimacy-check")
+def run_legitimacy_check(job_id: int):
+    """Run zero-cost Block G posting legitimacy, ghost-job, and work-auth check."""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    prefs = config.load_prefs()
+    
+    from src import legitimacy_filter
+    return legitimacy_filter.check_posting_legitimacy(job, prefs)
+
+@app.get("/api/jobs/{job_id}/contacto", dependencies=[Depends(ai_limiter)])
+def get_contacto_outreach(job_id: int, contact_name: str = "Hiring Team"):
+    """Generate 3 persona-specific LinkedIn connection drafts (<=300 chars) and formal application email."""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    profile = config.load_profile() or {}
+    prefs = config.load_prefs()
+    
+    from src import persona_outreach
+    try:
+        return persona_outreach.generate_persona_outreach(job, profile, prefs, contact_name=contact_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tailor/strategic-cover-letter", dependencies=[Depends(ai_limiter)])
+def generate_strategic_cover(payload: StrategicCoverPayload):
+    """Generate cover letter using one of the 4 CareerOps strategic angles (vision, problem_solver, methodology, direct_executive)."""
+    job = db.get_job(payload.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    profile = config.load_profile() or {}
+    prefs = config.load_prefs()
+    
+    try:
+        company_intel = scraper.get_company_intelligence(job.get("company", "")) if hasattr(scraper, "get_company_intelligence") else None
+        cl_text = tailor.generate_strategic_cover_letter(
+            job, profile, prefs, angle_key=payload.angle, tone=payload.tone, extra_notes=payload.extra_notes, company_intel=company_intel
+        )
+        return {"status": "success", "angle": payload.angle, "cover_letter": cl_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/story-bank")
+def get_story_bank():
+    """Retrieve persistent STAR+R behavioral story bank."""
+    from src import story_bank
+    stories = story_bank.load_story_bank()
+    if not stories:
+        profile = config.load_profile() or {}
+        prefs = config.load_prefs()
+        stories = story_bank.auto_extract_stories_from_profile(profile, prefs)
+    return {"stories": stories}
+
+@app.post("/api/story-bank")
+def update_story_bank(stories: list[dict]):
+    """Update or save persistent STAR+R story bank."""
+    from src import story_bank
+    story_bank.save_story_bank(stories)
+    return {"status": "success", "count": len(stories)}
+
+@app.get("/api/jobs/{job_id}/reverse-interview", dependencies=[Depends(ai_limiter)])
+def get_reverse_interview(job_id: int):
+    """Generate sharp reverse-interview questions to detect team/culture red flags."""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    prefs = config.load_prefs()
+    from src import story_bank
+    try:
+        questions = story_bank.generate_reverse_interview_questions(job, prefs)
+        return {"job_id": job_id, "questions": questions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/offers/audit", dependencies=[Depends(ai_limiter)])
+def audit_offer(payload: ContractAuditPayload):
+    """Audit offer letter or employment agreement for IP overreach, non-competes, and clawbacks."""
+    prefs = config.load_prefs()
+    from src import offer_analyzer
+    try:
+        return offer_analyzer.audit_offer_contract(payload.contract_text, prefs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/offers/salary-gap", dependencies=[Depends(ai_limiter)])
+def calculate_salary_gap(payload: SalaryGapPayload):
+    """Analyze salary gap and generate negotiation scripts."""
+    prefs = config.load_prefs()
+    from src import offer_analyzer
+    try:
+        return offer_analyzer.analyze_salary_gap(
+            offered_base=payload.offered_base,
+            desired_base=payload.desired_base,
+            market_median=payload.market_median,
+            currency=payload.currency,
+            prefs=prefs
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/outreach/classify-reply")
+def classify_inbound_recruiter_reply(payload: InboundReplyPayload):
+    """Classify inbound email from recruiter and auto-update application tracking state."""
+    prefs = config.load_prefs()
+    from src import reply_classifier
+    try:
+        result = reply_classifier.process_reply_and_update_application(payload.job_id, payload.email_text, prefs)
+        return {"status": "success", "classification": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- Serve Frontend build ---
 frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
-    
+
+    # Review-first evidence: post-fill screenshots (localhost-only by bind).
+    _previews_dir = config.OUTPUTS_DIR / "apply_previews"
+    if _previews_dir.exists():
+        app.mount("/apply-previews-files", StaticFiles(directory=str(_previews_dir)), name="apply-previews")
+
     @app.get("/{fallback_path:path}")
     def serve_frontend_page(fallback_path: str):
         if fallback_path.startswith("api"):

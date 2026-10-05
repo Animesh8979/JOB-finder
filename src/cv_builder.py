@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .anti_slop import audit_and_sanitize, sanitize_bullet
 
 def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str = "sb2nov") -> None:
     """Transform our standard profile dictionary into RenderCV YAML schema."""
@@ -59,7 +60,7 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
 
     # Summary
     if profile.get("summary"):
-        sections["summary"] = [profile["summary"]]
+        sections["summary"] = [audit_and_sanitize(profile["summary"]).cleaned_text]
 
     # Experience
     if profile.get("experience"):
@@ -83,7 +84,7 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
             # Bullets handling (support 'details' or 'bullets')
             bullets = exp.get("details") or exp.get("bullets")
             if bullets:
-                item["highlights"] = bullets
+                item["highlights"] = [sanitize_bullet(b) for b in bullets if b]
                 
             exp_list.append(item)
         sections["experience"] = exp_list
@@ -125,9 +126,9 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
             # Bullets handling
             bullets = pr.get("details") or pr.get("bullets")
             if bullets:
-                item["highlights"] = bullets
+                item["highlights"] = [sanitize_bullet(b) for b in bullets if b]
             elif pr.get("line"):
-                item["highlights"] = [pr["line"]]
+                item["highlights"] = [sanitize_bullet(pr["line"])]
                 
             proj_list.append(item)
         sections["projects"] = proj_list
@@ -221,3 +222,184 @@ def generate_cv_pdf(job: dict[str, Any], profile: dict[str, Any], theme: str = "
         return str(final_pdf_path)
         
     return None
+
+
+def render_typst_direct(typst_source: str, output_pdf_path: str | Path) -> str | None:
+    """Compile Typst document directly to vector PDF using in-process Python bindings.
+
+    Guarantees zero-dependency vector PDF generation with zero external CLI subprocesses.
+    Produces high-fidelity, linear Type-1/TrueType streams optimized for ATS parsing.
+    """
+    import tempfile
+    try:
+        import typst
+    except ImportError:
+        print("[cv_builder] typst package not installed for direct compilation")
+        return None
+
+    out_p = Path(output_pdf_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize em-dashes and artificial punctuation from Typst source
+    clean_source = typst_source.replace("—", ", ").replace(" -- ", ", ")
+    import re
+    # Escape @ (prevents invalid label reference) and $ (prevents math mode crash) in raw text
+    clean_source = re.sub(r'(?<!\\)@', r'\\@', clean_source)
+    clean_source = re.sub(r'(?<!\\)\$', r'\\$', clean_source)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".typ", delete=False, encoding="utf-8") as f:
+        f.write(clean_source)
+        temp_typ = f.name
+
+    try:
+        typst.compile(temp_typ, output=str(out_p))
+        if out_p.exists() and out_p.stat().st_size > 0:
+            return str(out_p)
+    except Exception as e:
+        print(f"[cv_builder] Typst compilation failed: {e}")
+    finally:
+        if os.path.exists(temp_typ):
+            try:
+                os.remove(temp_typ)
+            except Exception:
+                pass
+    return None
+
+
+def build_typst_resume(profile: dict[str, Any]) -> str:
+    """Generate clean, ATS-compliant Typst markup from profile data.
+    
+    Guarantees 0 em-dashes, clear typographic hierarchy, and dense ATS-friendly text flow.
+    """
+    name = (profile.get("name") or "Applicant").strip()
+    headline = (profile.get("headline") or "").strip()
+    email = (profile.get("email") or "").strip()
+    phone = (profile.get("phone") or "").strip()
+    location = (profile.get("location") or "").strip()
+    
+    raw_links = profile.get("links") or {}
+    linkedin = ""
+    github = ""
+    if isinstance(raw_links, dict):
+        linkedin = raw_links.get("linkedin", "")
+        github = raw_links.get("github", "")
+    elif isinstance(raw_links, list):
+        for l in raw_links:
+            if "linkedin.com" in l: linkedin = l
+            elif "github.com" in l: github = l
+
+    contacts = [c for c in [email, phone, location, linkedin, github] if c]
+    contact_str = " | ".join(contacts)
+
+    lines = [
+        '#set page(paper: "a4", margin: (x: 1.5cm, top: 1.2cm, bottom: 1.2cm))',
+        '#set text(font: "Liberation Sans", size: 9.5pt)',
+        '#set par(justify: true, leading: 0.55em)',
+        '',
+        '#align(center)[',
+        f'  #text(size: 16pt, weight: "bold")[{name}] \\',
+    ]
+    if headline:
+        lines.append(f'  #text(size: 10pt, weight: "medium")[{headline}] \\')
+    if contact_str:
+        lines.append(f'  #text(size: 8.5pt)[{contact_str}]')
+    lines.extend([
+        ']',
+        '#v(4pt)',
+        '#line(length: 100%, stroke: 0.5pt + luma(120))',
+        '#v(2pt)',
+    ])
+
+    # Summary
+    summary = profile.get("summary") or ""
+    if summary:
+        clean_sum = audit_and_sanitize(summary).cleaned_text.replace('"', '\\"')
+        lines.extend([
+            '== Professional Summary',
+            f'{clean_sum}',
+            '#v(4pt)',
+        ])
+
+    # Skills
+    skills = profile.get("skills") or []
+    if skills:
+        skills_str = ", ".join(skills).replace('"', '\\"')
+        lines.extend([
+            '== Core Technical Skills',
+            f'#text(weight: "bold")[Technical Proficiencies:] {skills_str}',
+            '#v(4pt)',
+        ])
+
+    # Experience
+    experience = profile.get("experience") or []
+    if experience:
+        lines.append('== Professional Experience')
+        for exp in experience:
+            title = exp.get("title") or exp.get("position") or "Role"
+            company = exp.get("company") or "Company"
+            loc = exp.get("location") or ""
+            dates = exp.get("dates") or (f"{exp.get('start','')} - {exp.get('end','')}".strip(" - ")) or "Present"
+            
+            header_right = f"{loc} | {dates}" if loc else dates
+            lines.append(f'*#text(weight: "bold")[{title}]* at *{company}* #h(1fr) #text(style: "italic")[{header_right}]')
+            
+            bullets = exp.get("bullets") or exp.get("details") or []
+            for b in bullets:
+                clean_b = sanitize_bullet(b).replace('"', '\\"')
+                if clean_b:
+                    lines.append(f'- {clean_b}')
+            lines.append('#v(2pt)')
+        lines.append('#v(2pt)')
+
+    # Projects
+    projects = profile.get("projects") or []
+    if projects:
+        lines.append('== Technical Projects')
+        for pr in projects:
+            pname = pr.get("name") or "Project"
+            tech = pr.get("tech") or []
+            tech_str = f" [{', '.join(tech)}]" if tech else ""
+            lines.append(f'*#text(weight: "bold")[{pname}]*{tech_str}')
+            
+            pbullets = pr.get("bullets") or pr.get("details") or []
+            if not pbullets and pr.get("description"):
+                pbullets = [pr["description"]]
+            elif not pbullets and pr.get("line"):
+                pbullets = [pr["line"]]
+                
+            for b in pbullets:
+                clean_b = sanitize_bullet(b).replace('"', '\\"')
+                if clean_b:
+                    lines.append(f'- {clean_b}')
+            lines.append('#v(2pt)')
+        lines.append('#v(2pt)')
+
+    # Education
+    education = profile.get("education") or []
+    if education:
+        lines.append('== Education')
+        for ed in education:
+            if isinstance(ed, dict):
+                degree = ed.get("degree") or ed.get("field") or "Degree"
+                inst = ed.get("institution") or ed.get("school") or "University"
+                yr = ed.get("year") or ed.get("dates") or ""
+                lines.append(f'*{degree}* - {inst} #h(1fr) #text(style: "italic")[{yr}]')
+            else:
+                lines.append(f'- {str(ed)}')
+        lines.append('#v(2pt)')
+
+    # Certifications
+    certs = profile.get("certifications") or []
+    if certs:
+        lines.append('== Certifications')
+        for c in certs:
+            lines.append(f'- {c}')
+
+    return "\n".join(lines)
+
+
+def generate_typst_cv(profile: dict[str, Any], output_pdf_path: str | Path) -> str | None:
+    """Generate and compile a vector PDF using in-process Typst."""
+    source = build_typst_resume(profile)
+    return render_typst_direct(source, output_pdf_path)
+

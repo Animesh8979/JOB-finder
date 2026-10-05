@@ -5,7 +5,6 @@ Run as:  python -m src.autofill_runner <path-to-config.json>
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 import re
@@ -40,8 +39,18 @@ def _match_value(key: str, cfg: dict) -> str:
         return cfg.get("phone", "")
     if any(w in k for w in ("city", "location", "where are you", "current location")):
         return cfg.get("location", "")
+    if "cover" in k and any(w in k for w in ("letter", "note", "message", "statement", "additional")):
+        return cfg.get("cover_letter", "")
+    if any(w in k for w in ("years of experience", "experience years", "experience_years", "yoe")):
+        return str(cfg.get("years_experience") or cfg.get("experience_years") or "")
+    if "experience" in k and any(w in k for w in ("year", "how many", "total")):
+        return str(cfg.get("years_experience") or cfg.get("experience_years") or "")
     if "name" in k and "user" not in k and "file" not in k:
         return cfg.get("full_name", "")
+    custom_map = cfg.get("custom_answers") or {}
+    for ckey, cval in custom_map.items():
+        if ckey.lower() in k:
+            return str(cval)
     return ""
 
 def _get_element_label(frame, el) -> str:
@@ -69,75 +78,113 @@ def _get_element_label(frame, el) -> str:
     if name: return name.strip()
     return ""
 
-def _bulk_llm_fallback(frame, cfg: dict, unfilled_elements: list) -> int:
-    """Uses Gemini to bulk-map candidate profile data to unknown form fields, with retries and batching."""
-    import httpx
-    # Read the key from the inherited environment (set by autofill.py), NOT the cfg dict.
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key or not unfilled_elements:
+_SELECT_OPTION_CAP = 12  # options shown to the LLM per <select> (prompt economy)
+
+
+def _select_options(el, limit: int = _SELECT_OPTION_CAP) -> list[str]:
+    """Real option labels for a <select>, so the LLM picks values that exist."""
+    try:
+        if (el.evaluate("el => el.tagName") or "").lower() != "select":
+            return []
+        opts = el.evaluate(
+            "el => Array.from(el.options).map(o => (o.label || o.value).trim()).filter(Boolean)"
+        )
+        return [o for o in opts if o][:limit]
+    except Exception:
+        return []
+
+
+def _bulk_llm_fallback(frame, cfg: dict, unfilled_elements: list, fill_log: list | None = None) -> int:
+    """LLM form mapping using an INDEXED element manifest.
+
+    Technique adopted from the browser-use agent family (indexed interactive
+    element list -> model acts by index): the model returns {"i": <index>,
+    "value": ...} against a numbered manifest instead of inventing selectors.
+    Fewer hallucinated targets, smaller prompts, and <select> elements ship
+    their real option labels so chosen values actually exist.
+    """
+    if not unfilled_elements:
         return 0
 
-    filled_count = 0
+    from src import llm
     from src.profile_parser import profile_context
     ctx = profile_context(cfg.get("profile", {}))
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    headers = {"x-goog-api-key": gemini_key, "content-type": "application/json"}
-
-    # Batch into chunks of 30 to prevent context overflow
-    chunk_size = 30
+    filled_count = 0
+    # Batch into chunks of 25 to prevent context overflow
+    chunk_size = 25
     for i in range(0, len(unfilled_elements), chunk_size):
         chunk = unfilled_elements[i:i + chunk_size]
-        schema_list = [{"element_id": e["id_key"], "label": e["label"], "type": e["type"]} for e in chunk]
+        manifest = []
+        for idx, e in enumerate(chunk):
+            entry = {"i": idx, "label": (e.get("label") or "")[:120], "type": e.get("type")}
+            if e.get("options"):
+                entry["options"] = e["options"]
+            manifest.append(entry)
 
         prompt = (
-            f"Map the candidate's profile to these form fields. Return a clean JSON dictionary where keys are 'element_id'.\n"
-            f"If 'type' is 'radio' or 'checkbox', output the boolean literal true or false.\n"
-            f"If it's a question, generate a brief (1 sentence) answer. If it doesn't apply, omit it entirely.\n"
-            f"FIELDS: {json.dumps(schema_list, indent=2)}\n\n"
+            "Map the candidate's profile onto this numbered list of form fields.\n"
+            "Return a JSON array: [{\"i\": <index>, \"value\": <string|boolean>}].\n"
+            "Rules:\n"
+            "- For radio/checkbox fields output the boolean true/false.\n"
+            "- For fields with an 'options' list, value MUST be one of those exact option strings.\n"
+            "- For open questions answer in one short sentence using ONLY the candidate's real background.\n"
+            "- Never invent employers, dates, or credentials. If a field does not apply, omit it.\n\n"
+            f"FIELDS: {json.dumps(manifest, indent=1)}\n\n"
             f"PROFILE CONTEXT:\n{ctx}"
         )
 
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
-        }
-
-        # Retry loop
-        for attempt in range(3):
-            try:
-                resp = httpx.post(url, json=payload, headers=headers, timeout=25.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    raw_json = data["candidates"][0]["content"]["parts"][0]["text"]
-                    mapping = json.loads(_clean_json(raw_json))
-                    
-                    for el_dict in chunk:
-                        eid = el_dict["id_key"]
-                        if eid in mapping and mapping[eid] is not None:
-                            try:
-                                locator = frame.locator(el_dict["selector"]).first
-                                tag = el_dict["type"]
-                                val = mapping[eid]
-                                
-                                if tag in ("radio", "checkbox"):
-                                    if str(val).lower() == "true": locator.check()
-                                elif tag == "select":
-                                    try: locator.select_option(label=str(val))
-                                    except: locator.select_option(value=str(val))
-                                else:
-                                    locator.fill(str(val))
-                                filled_count += 1
-                            except Exception:
-                                pass
-                    break # Success, break retry loop
-            except Exception as e:
-                if attempt == 2: print(f"Bulk LLM chunk {i} failed after 3 retries: {e}")
-                time.sleep(2)
+        try:
+            mapping = llm.generate_json(
+                prompt,
+                system=(
+                    "You are a precise form-autofill engine. Return ONLY a JSON array of "
+                    "{\"i\": index, \"value\": value} objects. Never return selectors."
+                ),
+                temperature=0.1
+            )
+            actions = mapping if isinstance(mapping, list) else []
+            for act in actions:
+                try:
+                    if not isinstance(act, dict) or "i" not in act:
+                        continue
+                    pos = int(act["i"])
+                    if not (0 <= pos < len(chunk)):
+                        continue
+                    el_dict = chunk[pos]
+                    val = act.get("value")
+                    if val is None:
+                        continue
+                    locator = frame.locator(el_dict["selector"]).first
+                    tag = el_dict["type"]
+                    if tag in ("radio", "checkbox"):
+                        if str(val).lower() == "true":
+                            locator.check()
+                    elif tag == "select":
+                        try:
+                            locator.select_option(label=str(val))
+                        except Exception:
+                            locator.select_option(value=str(val))
+                    else:
+                        text = str(val)
+                        if len(text) > 500:  # cap runaway generations
+                            text = text[:500]
+                        locator.fill(text)
+                    filled_count += 1
+                    if fill_log is not None:
+                        fill_log.append({
+                            "label": el_dict.get("label") or el_dict.get("id_key") or "",
+                            "value": str(val)[:200],
+                            "via": "llm",
+                        })
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"Bulk LLM chunk {i} failed: {e}")
 
     return filled_count
 
-def _fill_page(page, cfg: dict) -> int:
+def _fill_page(page, cfg: dict, fill_log: list | None = None) -> int:
     filled = 0
     frames = [page.main_frame] + page.main_frame.child_frames
 
@@ -151,6 +198,8 @@ def _fill_page(page, cfg: dict) -> int:
                     if "resume" in lbl or "cv" in lbl or "upload" in lbl:
                         inp.set_input_files(cfg["resume_path"])
                         filled += 1
+                        if fill_log is not None:
+                            fill_log.append({"label": lbl or "resume upload", "value": "resume.pdf", "via": "upload"})
                 except Exception:
                     pass
 
@@ -183,15 +232,17 @@ def _fill_page(page, cfg: dict) -> int:
                     else:
                         el.fill(value)
                     filled += 1
+                    if fill_log is not None:
+                        fill_log.append({"label": label_text or key[:60], "value": str(value)[:200], "via": "profile"})
                 else:
                     current_val = ""
                     if itype not in ("radio", "checkbox"):
                         current_val = el.input_value()
-                    
+
                     if not current_val.strip() and not el.is_checked():
                         eid = el.get_attribute("id")
                         ename = el.get_attribute("name")
-                        
+
                         # Generate ultra-safe CSS selector
                         if eid:
                             selector = f"[id='{eid}']"
@@ -201,29 +252,30 @@ def _fill_page(page, cfg: dict) -> int:
                             idx = len(unfilled)
                             el.evaluate("(e, i) => e.setAttribute('data-ai-fallback', i)", str(idx))
                             selector = f"[data-ai-fallback='{idx}']"
-                            
+
                         unfilled.append({
                             "selector": selector,
                             "id_key": eid or ename or selector,
                             "label": label_text,
-                            "type": itype
+                            "type": itype,
+                            "options": _select_options(el),
                         })
             except Exception:
                 pass
                 
         if unfilled:
-            filled += _bulk_llm_fallback(frame, cfg, unfilled)
-            
+            filled += _bulk_llm_fallback(frame, cfg, unfilled, fill_log)
+
     return filled
 
-def _paginate_and_fill(page, cfg: dict) -> int:
+def _paginate_and_fill(page, cfg: dict, fill_log: list | None = None) -> int:
     """The End-to-End Hunter: Fills current page, finds 'Next', and repeats."""
     total_filled = 0
     max_pages = 8 # Prevent infinite loops
-    
+
     for page_num in range(max_pages):
         print(f"Filling Page {page_num + 1}...")
-        total_filled += _fill_page(page, cfg)
+        total_filled += _fill_page(page, cfg, fill_log)
         
         # Hunt for a Next/Continue button
         next_btn = None
@@ -254,23 +306,67 @@ def _paginate_and_fill(page, cfg: dict) -> int:
             
     return total_filled
 
-def run(cfg: dict) -> None:
-    from playwright.sync_api import sync_playwright
+def _write_fill_report(page, cfg: dict, fill_log: list) -> str:
+    """Save a review-first verification pack: full-page screenshot + fill log.
 
-    with sync_playwright() as p:
-        # Context locking & Stealth flags
-        args = ["--start-maximized", "--disable-blink-features=AutomationControlled"]
+    The user reviews THIS before touching the real Submit button — the whole
+    point of the review-first principle, made visible.
+    """
+    try:
+        from src import config as _config
+
+        out_dir = _config.OUTPUTS_DIR / "apply_previews"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        slug = re.sub(r"[^a-z0-9]+", "-", (cfg.get("job_company") or "application").lower()).strip("-")[:40] or "application"
+        base = out_dir / f"{slug}-{stamp}"
+
+        png_path = f"{base}.png"
         try:
-            ctx = p.chromium.launch_persistent_context(
-                cfg["user_data_dir"], headless=False, accept_downloads=True,
-                viewport={"width": 1300, "height": 920}, args=args,
-            )
+            page.screenshot(path=png_path, full_page=True, timeout=15000)
         except Exception as e:
-            print(f"Persistent context locked, falling back to ephemeral incognito context: {e}")
-            browser = p.chromium.launch(headless=False, args=args)
-            ctx = browser.new_context(viewport={"width": 1300, "height": 920})
-            
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            print(f"Screenshot skipped: {e}")
+            png_path = ""
+
+        report = {
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "apply_url": cfg.get("apply_url"),
+            "job_title": cfg.get("job_title"),
+            "job_company": cfg.get("job_company"),
+            "fields_filled": fill_log,
+            "screenshot": png_path,
+            "reminder": "REVIEW-FIRST: nothing was submitted. Verify every field, then submit yourself.",
+        }
+        json_path = f"{base}.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        print(f"Fill report saved: {json_path}" + (" (+ screenshot)" if png_path else ""))
+        return json_path
+    except Exception as e:
+        print(f"Fill report skipped: {e}")
+        return ""
+
+def run(cfg: dict) -> None:
+    from contextlib import ExitStack
+
+    from src.stealth_browser import launch_sync
+
+    with ExitStack() as stack:
+        # Stealth-first: Camoufox (humanized cursor, rotated fingerprint) with a
+        # transparent fallback to Chromium. Each engine keeps its OWN profile dir
+        # (stealth_browser appends "-camoufox") to avoid cross-engine corruption.
+        fill_log: list = []
+        try:
+            ctx = stack.enter_context(launch_sync(
+                headless=False,
+                user_data_dir=cfg["user_data_dir"],
+                humanize=True,
+            ))
+        except Exception as e:
+            print(f"Persistent profile locked or unavailable ({e}); using an ephemeral session instead.")
+            ctx = stack.enter_context(launch_sync(headless=False))
+
+        page = ctx.pages[0] if getattr(ctx, "pages", None) else ctx.new_page()
         try:
             # Dropped networkidle for domcontentloaded to prevent 60s timeout hangs
             page.goto(cfg["apply_url"], wait_until="domcontentloaded", timeout=30000)
@@ -288,21 +384,21 @@ def run(cfg: dict) -> None:
                     used, msg = fill_with_engine(page, cfg["apply_url"], cfg)
                     print(msg)
                     if not used:
-                        _paginate_and_fill(page, cfg)
+                        _paginate_and_fill(page, cfg, fill_log)
                 except ImportError:
-                    _paginate_and_fill(page, cfg)
+                    _paginate_and_fill(page, cfg, fill_log)
                 print("Pre-filled all pages. REVIEW EVERYTHING, then submit yourself.")
             except Exception as e:
                 print(f"Auto-fill hit an issue: {e}")
 
+        # Review-first verification pack: screenshot + exactly-what-was-filled log.
+        _write_fill_report(page, cfg, fill_log)
+
         print(">>> Review and submit in the browser. Close the window when you're done. <<<")
         try:
-            while len(ctx.pages) > 0:
+            holder = page.context  # works for both Context- and Browser-shaped handles
+            while len(holder.pages) > 0:
                 time.sleep(0.5)
-        except Exception:
-            pass
-        try:
-            ctx.close()
         except Exception:
             pass
 

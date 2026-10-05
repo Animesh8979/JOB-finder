@@ -31,22 +31,57 @@ def render() -> None:
     st.info("Only email recruiters whose address you obtained legitimately (job post, company "
             "site, mutual intro). No scraping or bought lists — that's spam and hurts you.")
 
-    # Optional: tie the email to a saved job for richer context.
-    apps = db.list_applications()
-    job_choices = {0: "— none —"} | {a["job_id"]: f"{a['title']} — {a['company']}" for a in apps}
-    sel_job = st.selectbox("Relate to a saved job (optional)", list(job_choices),
-                           format_func=lambda i: job_choices[i])
-    job = db.get_job(sel_job) if sel_job else None
+    tab_email, tab_contacto = st.tabs(["✉️ Formal Email Draft", "🤝 contacto (LinkedIn 3-Persona Drafts)"])
 
-    with st.form("contact_form"):
-        c1, c2 = st.columns(2)
-        name = c1.text_input("Recruiter name", placeholder="Alex Morgan")
-        email = c2.text_input("Recruiter email", placeholder="alex@company.com")
-        company = c1.text_input("Company", value=(job or {}).get("company", ""))
-        role = c2.text_input("Role / title", value=(job or {}).get("title", ""))
-        tone = c1.selectbox("Tone", ["Professional", "Warm", "Concise", "Enthusiastic"])
-        extra = c2.text_input("Anything to mention? (optional)")
-        gen = st.form_submit_button("✍️ Generate draft", type="primary")
+    with tab_email:
+        # Optional: tie the email to a saved job for richer context.
+        apps = db.list_applications()
+        job_choices = {0: "— none —"} | {a["job_id"]: f"{a['title']} — {a['company']}" for a in apps}
+        sel_job = st.selectbox("Relate to a saved job (optional)", list(job_choices),
+                               format_func=lambda i: job_choices[i])
+        job = db.get_job(sel_job) if sel_job else None
+
+        with st.form("contact_form"):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Recruiter name", placeholder="Alex Morgan")
+            email = c2.text_input("Recruiter email", placeholder="alex@company.com")
+            company = c1.text_input("Company", value=(job or {}).get("company", ""))
+            role = c2.text_input("Role / title", value=(job or {}).get("title", ""))
+            tone = c1.selectbox("Tone", ["Professional", "Warm", "Concise", "Enthusiastic"])
+            extra = c2.text_input("Anything to mention? (optional)")
+            gen = st.form_submit_button("✍️ Generate draft", type="primary")
+
+    with tab_contacto:
+        st.subheader("🤝 contacto: Multi-Persona LinkedIn Connection Drafts")
+        st.caption("Generates ≤300-character LinkedIn notes tuned to 3 personas with copy-to-clipboard blocks.")
+        
+        apps = db.list_applications()
+        c_job_choices = {a["job_id"]: f"{a['title']} — {a['company']}" for a in apps}
+        if not c_job_choices:
+            st.info("Save a job in the Tracker first to generate persona-targeted LinkedIn notes.")
+        else:
+            c_sel_job = st.selectbox("Select Target Job", list(c_job_choices), format_func=lambda i: c_job_choices[i], key="contacto_job_sel")
+            target_contact_name = st.text_input("Target Contact Name (optional)", value="Hiring Team", key="contacto_contact_name")
+            
+            if st.button("✨ Generate 3-Persona LinkedIn Drafts", type="primary", key="contacto_btn"):
+                with st.spinner("Drafting ≤300-char LinkedIn notes..."):
+                    from .. import persona_outreach
+                    job_target = db.get_job(c_sel_job)
+                    p_res = persona_outreach.generate_persona_outreach(job_target, profile, prefs, contact_name=target_contact_name)
+                    
+                    st.success("Drafts generated! Click code blocks to copy directly into LinkedIn.")
+                    
+                    st.markdown("### 👔 1. Hiring Manager Note (Velocity & Problem Solving)")
+                    st.code(p_res["linkedin_hiring_manager"], language="text")
+                    st.caption(f"Length: {len(p_res['linkedin_hiring_manager'])} / 300 characters")
+
+                    st.markdown("### 🎯 2. Recruiter / Talent Partner Note (Stack & Fit)")
+                    st.code(p_res["linkedin_recruiter"], language="text")
+                    st.caption(f"Length: {len(p_res['linkedin_recruiter'])} / 300 characters")
+
+                    st.markdown("### 🧑‍💻 3. Engineering Peer Note (Shared Craft & Open-Source)")
+                    st.code(p_res["linkedin_peer"], language="text")
+                    st.caption(f"Length: {len(p_res['linkedin_peer'])} / 300 characters")
 
     if gen:
         if not email:

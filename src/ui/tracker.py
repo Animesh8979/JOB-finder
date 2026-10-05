@@ -43,6 +43,63 @@ def render() -> None:
 
     st.divider()
 
+    # --- CareerOps Pipeline Automation Tools ---
+    c_tools1, c_tools2 = st.columns(2)
+    with c_tools1:
+        with st.expander("📬 reply-watch: Classify Inbound Recruiter Email"):
+            inbound_email_text = st.text_area("Paste recruiter email text", height=120, key="inbound_email_box")
+            target_job_opts = {a["job_id"]: f"{a['title']} — {a['company']}" for a in apps}
+            target_inbound_job = st.selectbox("Related Application", list(target_job_opts), format_func=lambda i: target_job_opts[i], key="inbound_job_sel")
+            
+            if st.button("🤖 Classify & Auto-Update Pipeline", key="classify_btn"):
+                if not inbound_email_text.strip():
+                    st.error("Please paste email text.")
+                else:
+                    with st.spinner("Classifying email..."):
+                        from .. import reply_classifier
+                        res = reply_classifier.process_reply_and_update_application(target_inbound_job, inbound_email_text, prefs={})
+                        st.success(f"Category: {res.get('category')} → Status updated to: {res.get('recommended_status')}")
+                        st.info(f"Summary: {res.get('summary')}")
+                        if res.get("suggested_response"):
+                            st.caption(f"Suggested Next Action: {res.get('suggested_response')}")
+                        st.rerun()
+
+    with c_tools2:
+        with st.expander("💼 offer-prep: Offer Contract Auditor & Salary Negotiator"):
+            offer_tab1, offer_tab2 = st.tabs(["Auditor", "Salary Gap"])
+            with offer_tab1:
+                contract_txt = st.text_area("Paste offer letter / agreement snippet", height=90, key="contract_box")
+                if st.button("⚖️ Audit Contract Clauses", key="audit_contract_btn"):
+                    if not contract_txt.strip():
+                        st.error("Paste contract text.")
+                    else:
+                        with st.spinner("Auditing clauses..."):
+                            from .. import offer_analyzer
+                            audit_res = offer_analyzer.audit_offer_contract(contract_txt)
+                            if audit_res["flagged_clauses"]:
+                                for f in audit_res["flagged_clauses"]:
+                                    st.warning(f"⚠️ **[{f['risk_level']}] {f['category']}**: {f['finding']}")
+                            else:
+                                st.success("No severe IP or non-compete clauses detected!")
+                            with st.expander("Recommended Questions for Legal Counsel"):
+                                for q in audit_res.get("lawyer_questions", []):
+                                    st.write(f"- {q}")
+            with offer_tab2:
+                o_base = st.number_input("Offered Base Salary", value=150000, step=5000)
+                d_base = st.number_input("Target / Desired Base", value=175000, step=5000)
+                m_base = st.number_input("Market Median Benchmark", value=170000, step=5000)
+                if st.button("📈 Generate Counter-Offer Script", key="salary_calc_btn"):
+                    with st.spinner("Calculating negotiation levers..."):
+                        from .. import offer_analyzer
+                        sal_res = offer_analyzer.analyze_salary_gap(o_base, d_base, m_base)
+                        st.metric("Salary Gap", f"+${sal_res['gap']:,} ({sal_res['gap_percent']}%)")
+                        st.code(sal_res["counter_email"], language="text")
+                        st.caption("Alternative levers to negotiate:")
+                        for lever in sal_res["alternative_levers"]:
+                            st.write(f"- {lever}")
+
+    st.divider()
+
     # --- View Mode Toggle ---
     view_mode = st.radio(
         "View Mode",

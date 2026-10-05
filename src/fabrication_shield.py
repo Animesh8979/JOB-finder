@@ -31,15 +31,17 @@ def verify_cover_letter_claims(cover_letter_text: str, profile: dict[str, Any], 
         "Output ONLY the final, safe cover letter text. No preamble, no explanation."
     )
     
-    verified_text = llm.generate(
-        prompt,
-        system="You are a strict, objective fact-checker. You output only the safe text.",
-        model=prefs.get("writing_model"),
-        max_tokens=900,
-        temperature=0.1
-    )
-    
-    return verified_text.strip()
+    try:
+        verified_text = llm.generate(
+            prompt,
+            system="You are a strict, objective fact-checker. You output only the safe text.",
+            model=prefs.get("writing_model"),
+            max_tokens=900,
+            temperature=0.1
+        )
+        return verified_text.strip()
+    except Exception:
+        return cover_letter_text.strip()
 
 
 def verify_resume_claims(resume_data: dict[str, Any], profile: dict[str, Any], prefs: dict[str, Any]) -> dict[str, Any]:

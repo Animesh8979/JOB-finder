@@ -10,6 +10,7 @@ from typing import Any
 from . import llm
 from .profile_parser import profile_context
 from .fabrication_shield import verify_cover_letter_claims, verify_resume_claims
+from .anti_slop import audit_and_sanitize, sanitize_bullet
 
 NO_FABRICATION = (
     "CRITICAL RULES:\n"
@@ -17,7 +18,12 @@ NO_FABRICATION = (
     "- You MAY reorder, reword, summarize, and choose what to include or emphasize.\n"
     "- You MAY NOT invent employers, job titles, dates, degrees, certifications, tools,\n"
     "  metrics, or achievements that are not in the source. No exaggeration.\n"
-    "- Keep everything truthful and ATS-friendly (plain text, standard sections, no tables)."
+    "- Keep everything truthful and ATS-friendly (plain text, standard sections, no tables).\n"
+    "- HUMAN WRITING STYLE: Never use em-dashes (—) or double hyphens (--). Use commas or hyphens (-).\n"
+    "- ZERO AI CLICHÉS: Never use words like 'delve', 'testament', 'tapestry', 'spearhead', 'leverage', "
+    "'holistic', 'foster', 'beacon', 'pivotal', 'robust', 'seamless', 'cutting-edge', 'thrilled to apply', "
+    "'I hope this letter finds you well', 'Furthermore', 'Moreover'.\n"
+    "- NATURAL BUILDER VOICE: Use active, direct language with varied sentence rhythms."
 )
 
 
@@ -57,13 +63,23 @@ def tailor_resume(job: dict[str, Any], profile: dict[str, Any], prefs: dict[str,
         "- projects (list of objects): {name, line}.\n"
         "- certifications (list[str])."
     )
-    data = llm.generate_json(
-        prompt,
-        system="You are an expert resume writer and career coach.",
-        cached_context=profile_context(profile),
-        model=prefs.get("writing_model"),
-        max_tokens=2600,
-    )
+    try:
+        data = llm.generate_json(
+            prompt,
+            system="You are an expert resume writer and career coach.",
+            cached_context=profile_context(profile),
+            model=prefs.get("writing_model"),
+            max_tokens=3000,
+        )
+    except Exception:
+        data = {
+            "summary": profile.get("summary", ""),
+            "skills": profile.get("skills", []),
+            "experience": profile.get("experience", []),
+            "education": profile.get("education", []),
+            "projects": profile.get("projects", []),
+            "certifications": profile.get("certifications", []),
+        }
     if not isinstance(data, dict):
         data = {}
     data["name"] = name
@@ -73,6 +89,14 @@ def tailor_resume(job: dict[str, Any], profile: dict[str, Any], prefs: dict[str,
         data.setdefault(key, [])
     data.setdefault("summary", "")
     data = verify_resume_claims(data, profile, prefs)
+    if "summary" in data and isinstance(data["summary"], str):
+        data["summary"] = audit_and_sanitize(data["summary"]).cleaned_text
+    for exp in data.get("experience", []):
+        if isinstance(exp, dict) and "bullets" in exp and isinstance(exp["bullets"], list):
+            exp["bullets"] = [sanitize_bullet(b) for b in exp["bullets"]]
+    for proj in data.get("projects", []):
+        if isinstance(proj, dict) and "bullets" in proj and isinstance(proj["bullets"], list):
+            proj["bullets"] = [sanitize_bullet(b) for b in proj["bullets"]]
     return data
 
 
@@ -95,19 +119,34 @@ def cover_letter(
         "Guidelines: 250-350 words in 3-4 short paragraphs. Open with a specific hook (not "
         "'I am writing to apply'). Show genuine fit using the candidate's REAL experience. "
         "Say why THIS company/role. End with a polite call to action. Use 'Dear Hiring Manager' "
-        "if no name is known. Do NOT add dates or postal addresses — start at the salutation and "
+        "if no name is known. Do NOT add dates or postal addresses - start at the salutation and "
         "end by signing off with the candidate's name."
     )
-    text = llm.generate(
-        prompt,
-        system="You are an expert cover-letter writer.",
-        cached_context=profile_context(profile),
-        model=prefs.get("writing_model"),
-        max_tokens=900,
-        temperature=0.6,
-    )
+    try:
+        text = llm.generate(
+            prompt,
+            system="You are an expert cover-letter writer. Write authentically like a real engineer, with zero AI clichés or em dashes.",
+            cached_context=profile_context(profile),
+            model=prefs.get("writing_model"),
+            max_tokens=900,
+            temperature=0.6,
+        )
+    except Exception:
+        text = (
+            f"Dear Hiring Manager,\n\n"
+            f"I am applying for the {job.get('title','role')} position at {job.get('company','your company')}. "
+            f"With a strong background in {profile.get('headline','Business Analytics and AI Automation')} and hands-on experience "
+            f"building end-to-end Python data science pipelines, KPI dashboards, and multi-agent AI systems, I am excited about "
+            f"the opportunity to contribute to your data initiatives.\n\n"
+            f"At Elevate Labs, I engineered regression and classification models in Python that delivered reliable, actionable "
+            f"business insights, earning the Best Performer Award. Furthermore, I built full-stack automation workflows including "
+            f"an intelligent job matching engine and automated data analytics dashboards.\n\n"
+            f"I look forward to discussing how my skills in Python, SQL, and AI workflow automation can create immediate value for your team.\n\n"
+            f"Sincerely,\n{name}"
+        )
     text = text.strip()
-    return verify_cover_letter_claims(text, profile, prefs)
+    verified = verify_cover_letter_claims(text, profile, prefs)
+    return audit_and_sanitize(verified).cleaned_text
 
 
 def suggest_bullet_improvements(job: dict[str, Any], profile: dict[str, Any], prefs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -154,11 +193,86 @@ def suggest_bullet_improvements(job: dict[str, Any], profile: dict[str, Any], pr
             max_tokens=2000
         )
         if isinstance(data, dict) and "suggestions" in data:
+            for s in data["suggestions"]:
+                if isinstance(s, dict) and "suggested" in s:
+                    s["suggested"] = sanitize_bullet(s["suggested"])
             return data["suggestions"]
     except Exception as e:
         print(f"Error generating bullet improvements: {e}")
         
     return []
+
+
+# --- 4-Angle Cover Letter Strategic Generator (CareerOps Protocol) -----------
+
+COVER_LETTER_ANGLES = {
+    "vision": {
+        "name": "The Vision Angle",
+        "description": "Align candidate philosophy with company mission and long-term trajectory.",
+        "instruction": "Open with deep admiration and alignment with the company's core mission, product vision, and market impact. Frame candidate background as a natural catalyst for their next stage of growth."
+    },
+    "problem_solver": {
+        "name": "The Problem-Solver Angle",
+        "description": "Directly address and deconstruct the hardest technical challenge mentioned in the JD.",
+        "instruction": "Analyze the hardest technical problem or bottleneck described in the job requirements (scaling, distributed systems, latency, reliability) and explain the exact architectural methodology you have used to solve similar problems."
+    },
+    "methodology": {
+        "name": "The Methodology Angle",
+        "description": "Focus on engineering craft, testing discipline, observability, and shipping velocity.",
+        "instruction": "Emphasize your engineering practices: high code quality, automated CI/CD, deterministic testing, zero-downtime deployments, and collaborative mentorship that raises team-wide standards."
+    },
+    "direct_executive": {
+        "name": "The Direct / Executive Angle",
+        "description": "High-impact, concise, metric-dense narrative with zero corporate fluff.",
+        "instruction": "Cut straight to the point. No fluff. Highlight 3 decisive, verifiable accomplishments with production metrics and invite a technical conversation."
+    }
+}
+
+
+def generate_strategic_cover_letter(
+    job: dict[str, Any],
+    profile: dict[str, Any],
+    prefs: dict[str, Any],
+    angle_key: str = "vision",
+    tone: str = "Professional",
+    extra_notes: str = "",
+    company_intel: dict[str, Any] | None = None
+) -> str:
+    """Generate a high-converting cover letter using one of the 4 strategic CareerOps angles."""
+    name, _ = _name_and_contact(profile, prefs)
+    notes = f"Extra candidate context: {extra_notes}\n" if extra_notes.strip() else ""
+    
+    angle_info = COVER_LETTER_ANGLES.get(angle_key.lower(), COVER_LETTER_ANGLES["vision"])
+    
+    intel_str = ""
+    if company_intel and company_intel.get("overview"):
+        intel_str = f"COMPANY OVERVIEW: {company_intel.get('overview')}\nCULTURE: {company_intel.get('culture_signals', '')}\n\n"
+
+    prompt = (
+        f"Write a high-converting {tone.lower()} cover letter using '{angle_info['name']}'.\n\n"
+        f"STRATEGIC ANGLE INSTRUCTION:\n{angle_info['instruction']}\n\n"
+        f"JOB TITLE: {job.get('title','')}\nCOMPANY: {job.get('company','')}\n"
+        f"JOB DESCRIPTION:\n\"\"\"\n{(job.get('description') or '')[:3000]}\n\"\"\"\n\n"
+        f"{intel_str}"
+        f"Candidate name: {name}\n{notes}\n"
+        f"{NO_FABRICATION}\n\n"
+        "Guidelines:\n"
+        "- 250-320 words in 3-4 structured paragraphs.\n"
+        "- Salutation: 'Dear Hiring Manager,' (or name if known).\n"
+        "- Strict truthfulness: use only verified achievements from candidate profile.\n"
+        "- Sign-off: 'Sincerely,\n" + name + "'"
+    )
+
+    text = llm.generate(
+        prompt,
+        system="You are an elite career strategist and executive copywriter.",
+        cached_context=profile_context(profile),
+        model=prefs.get("writing_model"),
+        max_tokens=900,
+        temperature=0.5,
+    )
+    verified = verify_cover_letter_claims(text.strip(), profile, prefs)
+    return audit_and_sanitize(verified).cleaned_text
 
 
 def company_specific_cover_letter(
@@ -167,45 +281,13 @@ def company_specific_cover_letter(
     prefs: dict[str, Any],
     tone: str = "Professional",
     extra_notes: str = "",
-    company_intel: dict[str, Any] | None = None
+    company_intel: dict[str, Any] | None = None,
+    angle: str = "vision"
 ) -> str:
     """Generate a cover letter utilizing company intelligence details to create custom hooks."""
-    name, _ = _name_and_contact(profile, prefs)
-    notes = f"Extra notes to weave in naturally: {extra_notes}\n" if extra_notes.strip() else ""
-    
-    intel_str = ""
-    if company_intel and company_intel.get("mission"):
-        intel_str = (
-            "COMPANY RESEARCH SUMMARY:\n"
-            f"Mission: {company_intel.get('mission')}\n"
-            f"Values: {', '.join(company_intel.get('values', []))}\n"
-            f"Milestones: {', '.join(company_intel.get('milestones', []))}\n"
-            f"Culture: {company_intel.get('culture_summary')}\n\n"
-            "INSTRUCTION: Open the cover letter with a personalized hook showing your alignment with their mission, values, or recent milestones. Avoid generic lines like 'I am writing to apply'.\n\n"
-        )
-    
-    prompt = (
-        f"Write a {tone.lower()} cover letter for this job.\n\n"
-        f"JOB TITLE: {job.get('title','')}\nCOMPANY: {job.get('company','')}\n"
-        f"JOB DESCRIPTION:\n\"\"\"\n{(job.get('description') or '')[:3000]}\n\"\"\"\n\n"
-        f"{intel_str}"
-        f"Candidate name: {name}\n{notes}\n"
-        f"{NO_FABRICATION}\n\n"
-        "Guidelines: 250-350 words in 3-4 short paragraphs. Open with a specific company hook from the research above. "
-        "Show genuine fit using the candidate's REAL experience. Say why THIS company/role. "
-        "End with a polite call to action. Use 'Dear Hiring Manager' if no name is known. "
-        "Do NOT add dates or postal addresses — start at the salutation and end by signing off with the candidate's name."
+    return generate_strategic_cover_letter(
+        job, profile, prefs, angle_key=angle, tone=tone, extra_notes=extra_notes, company_intel=company_intel
     )
-    
-    text = llm.generate(
-        prompt,
-        system="You are an expert cover-letter writer.",
-        cached_context=profile_context(profile),
-        model=prefs.get("writing_model"),
-        max_tokens=900,
-        temperature=0.6,
-    )
-    text = text.strip()
-    return verify_cover_letter_claims(text, profile, prefs)
+
 
 

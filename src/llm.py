@@ -245,7 +245,8 @@ def _nvidia(prompt: str, system: str, cached_context: str, model: str,
         resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
         if resp.status_code == 200:
             data = resp.json()
-            result = data["choices"][0]["message"]["content"].strip()
+            msg_obj = data["choices"][0]["message"]
+            result = (msg_obj.get("content") or msg_obj.get("reasoning_content") or "").strip()
             del key
             return result
         else:
@@ -314,9 +315,9 @@ def _get_auto_pool() -> list[dict[str, str]]:
     pool = []
     
     if env.get("NVIDIA_API_KEY_1"):
-        pool.append({"id": "NVIDIA_1", "provider": "nvidia", "key": env.get("NVIDIA_API_KEY_1"), "model": "meta/llama-3.1-70b-instruct"})
+        pool.append({"id": "NVIDIA_1", "provider": "nvidia", "key": env.get("NVIDIA_API_KEY_1"), "model": "nvidia/nemotron-3-super-120b-a12b"})
     if env.get("NVIDIA_API_KEY_2"):
-        pool.append({"id": "NVIDIA_2", "provider": "nvidia", "key": env.get("NVIDIA_API_KEY_2"), "model": "mistralai/mixtral-8x22b-instruct-v0.1"})
+        pool.append({"id": "NVIDIA_2", "provider": "nvidia", "key": env.get("NVIDIA_API_KEY_2"), "model": "nvidia/nemotron-3-super-120b-a12b"})
     if env.get("NARA_API_KEY"):
         pool.append({"id": "NARA", "provider": "nara", "key": env.get("NARA_API_KEY"), "model": "mimo-v2.5-pro"})
     if env.get("GEMINI_API_KEY"):
@@ -333,6 +334,9 @@ def _get_auto_pool() -> list[dict[str, str]]:
 # --- Public API --------------------------------------------------------------
 def provider_ready() -> bool:
     """Return True if any LLM provider is configured or running locally."""
+    import os
+    if os.environ.get("JOBFINDER_TEST_MODE") == "1":
+        return False
     from src import config
     return config.provider_ready() or len(_get_auto_pool()) > 0
 
@@ -355,7 +359,7 @@ def generate(
         if provider == "gemini":
             model = prefs.get("gemini_model", "gemini-2.0-flash")
         elif provider == "nvidia":
-            model = prefs.get("nvidia_model", "meta/llama-3.1-70b-instruct")
+            model = prefs.get("nvidia_model", "nvidia/nemotron-3-super-120b-a12b")
         elif provider == "ollama":
             model = prefs.get("ollama_model", "llama3.1:8b")
         elif provider == "nara":
@@ -402,7 +406,7 @@ def generate(
                 msg = str(e).lower()
                 last_exc = e
                 # Check for rate limit, out of credits, or timeouts/deprecated models
-                if any(k in msg for k in ["429", "quota", "too many", "rate limit", "402", "insufficient credits", "410", "gone", "end of life", "not found"]):
+                if any(k in msg for k in ["429", "quota", "too many", "rate limit", "402", "insufficient credits", "410", "gone", "end of life", "not found", "403", "forbidden", "telegram_required"]):
                     # Cooldown for 60 seconds (or practically skip it until next round)
                     _COOLDOWNS[target["id"]] = time.time() + 60
                     continue # instantly retry with next available
@@ -443,15 +447,28 @@ def generate(
     raise LLMError(f"AI request failed: {last_exc}")
 
 
+def _repair_json(s: str) -> Any:
+    s = s.strip()
+    if s.count('"') % 2 != 0:
+        s += '"'
+    diff_brace = s.count('{') - s.count('}')
+    diff_bracket = s.count('[') - s.count(']')
+    s += ']' * max(0, diff_bracket)
+    s += '}' * max(0, diff_brace)
+    return json.loads(s, strict=False)
+
+
 def extract_json(text: str) -> Any:
     """Best-effort: pull a JSON object/array out of an LLM response."""
     text = text.strip()
+    # Strip reasoning blocks if present (from reasoning models like DeepSeek, Nemotron, etc.)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     # Strip code fences if present.
     fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except Exception:
         pass
     # Grab the first {...} or [...] span.
@@ -460,9 +477,17 @@ def extract_json(text: str) -> Any:
         end = text.rfind(close_ch)
         if start != -1 and end != -1 and end > start:
             try:
-                return json.loads(text[start : end + 1])
+                return json.loads(text[start : end + 1], strict=False)
             except Exception:
-                continue
+                try:
+                    return _repair_json(text[start : end + 1])
+                except Exception:
+                    continue
+        elif start != -1:
+            try:
+                return _repair_json(text[start:])
+            except Exception:
+                pass
     raise LLMError("Could not parse a JSON response from the AI. Try again.")
 
 

@@ -1,9 +1,11 @@
 import React, { useEffect } from 'react';
 import { Toaster } from 'react-hot-toast';
+import { MotionConfig } from 'framer-motion';
 import { useAppStore } from './store/useAppStore';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'axios';
 import CinematicBackground from './components/CinematicBackground';
+import ErrorBoundary from './components/ErrorBoundary';
 import CommandCenter from './pages/CommandCenter';
 
 const queryClient = new QueryClient();
@@ -21,6 +23,14 @@ function AppContent() {
         const data = JSON.parse(e.data);
         if (data.readiness) {
           useAppStore.setState({ readiness: data.readiness });
+        }
+        if (data.type && data.type !== 'keepalive') {
+          useAppStore.getState().addTerminalLog({
+            id: Math.random().toString(36).substring(2, 9),
+            time: new Date().toISOString(),
+            msg: `[${data.type?.toUpperCase() || 'EVENT'}] ${JSON.stringify(data).substring(0, 150)}`,
+            type: data.type === 'error' ? 'error' : 'info'
+          });
         }
       } catch (err) {
         console.error("SSE parse error", err);
@@ -57,7 +67,9 @@ function AppContent() {
 
       <div className="w-full h-screen p-0 md:p-3 z-10 flex">
         <main className="flex-1 overflow-y-auto bg-transparent relative custom-scrollbar rounded-2xl md:border border-white/[0.04] md:bg-[rgba(10,10,12,0.15)] md:backdrop-blur-sm md:shadow-[inset_0_0_24px_rgba(0,0,0,0.4)]">
-          <CommandCenter />
+          <ErrorBoundary>
+            <CommandCenter />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
@@ -66,8 +78,10 @@ function AppContent() {
 
 export default function App() {
   return (
+    <MotionConfig reducedMotion="user">
     <QueryClientProvider client={queryClient}>
       <AppContent />
     </QueryClientProvider>
+    </MotionConfig>
   );
 }

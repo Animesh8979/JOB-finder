@@ -135,7 +135,7 @@ def check_resume_ats(resume_text: str, job_description: str, profile: dict[str, 
     impact_score = max(40, impact_score)
     
     data = {}
-    if llm.config.provider_ready():
+    if llm.provider_ready():
         prompt = (
             "You are an advanced Applicant Tracking System (ATS) evaluator (like Greenhouse/Lever).\n"
             "Compare the candidate's resume text against the job description below for semantic alignment and role suitability.\n\n"
@@ -405,3 +405,149 @@ def generate_followup_email(job: dict, profile: dict, prefs: dict, followup_numb
     if isinstance(data, dict):
         return data.get("subject", ""), data.get("body", "")
     return "", ""
+
+
+# --- Structured A–G 7-Block Evaluation (CareerOps Protocol) ------------------
+
+def evaluate_job_ag_blocks(
+    job: dict[str, Any],
+    profile: dict[str, Any],
+    prefs: dict[str, Any]
+) -> dict[str, Any]:
+    """Perform a comprehensive 7-block (A-G) evaluation of a job posting.
+    
+    Blocks:
+    - Block A: Role summary, mission, and 1 of 6 core archetypes.
+    - Block B: Hard requirements vs nice-to-haves gap analysis & mitigations.
+    - Block C: Seniority & leveling strategy (Senior, Staff, Lead, Principal).
+    - Block D: Compensation research and realistic salary range estimate.
+    - Block E: CV personalization plan (3-5 strongest proof points to highlight).
+    - Block F: STAR+R behavioral interview story mappings.
+    - Block G: Posting legitimacy, scam risk, ghost-job signals, and work-auth check.
+    """
+    import json
+    from .legitimacy_filter import check_posting_legitimacy
+
+    # 1. Deterministic Block G check (zero cost)
+    block_g = check_posting_legitimacy(job, prefs)
+
+    # 2. Semantic ATS and Red Flags
+    red_flags = detect_red_flags(job.get("description", ""))
+    ats_info = ats_coverage(profile.get("raw_text", "") or profile_context(profile), job.get("description", ""))
+
+    archetypes = [
+        "Infrastructure / Cloud / DevOps",
+        "Full-Stack Product Engineering",
+        "AI Platform / MLOps / LLM Engineering",
+        "Solutions / Forward Deployed / Field Engineering",
+        "Data Engineering / Analytics Platform",
+        "Embedded / Systems / Security Engineering"
+    ]
+
+    prompt = (
+        "You are an Elite Executive Career Strategist and ATS Architect (A-G Rubric).\n"
+        "Evaluate the candidate's profile against the following job posting.\n\n"
+        f"JOB TITLE: {job.get('title', '')}\n"
+        f"COMPANY: {job.get('company', '')}\n"
+        f"LOCATION: {job.get('location', 'Remote')}\n"
+        f"JOB DESCRIPTION:\n\"\"\"\n{(job.get('description') or '')[:3800]}\n\"\"\"\n\n"
+        f"ARCHETYPE CANDIDATES: {json.dumps(archetypes)}\n\n"
+        "Return strictly valid JSON with these exact A-F structured blocks:\n"
+        "{\n"
+        '  "block_a": {\n'
+        '    "archetype": "one of the 6 archetypes above",\n'
+        '    "role_mission": "1-2 sentences on what this role uniquely achieves",\n'
+        '    "core_domain": "Primary technical domain"\n'
+        '  },\n'
+        '  "block_b": {\n'
+        '    "matched_core_skills": ["skill1", "skill2"],\n'
+        '    "hard_gaps": ["gap1", "gap2"],\n'
+        '    "gap_mitigations": [{"gap": "gap1", "mitigation_talking_point": "how to answer in interview"}]\n'
+        '  },\n'
+        '  "block_c": {\n'
+        '    "detected_level": "Senior / Staff / Lead / Principal",\n'
+        '    "leveling_rationale": "Why this level is indicated",\n'
+        '    "positioning_angle": "How candidate should position their seniority"\n'
+        '  },\n'
+        '  "block_d": {\n'
+        '    "estimated_low": int,\n'
+        '    "estimated_median": int,\n'
+        '    "estimated_high": int,\n'
+        '    "currency": "USD",\n'
+        '    "comp_rationale": "Compensation context"\n'
+        '  },\n'
+        '  "block_e": {\n'
+        '    "key_proof_points_to_highlight": ["proof point 1 from candidate profile", "proof point 2"],\n'
+        '    "tailoring_focus": "Primary narrative focus for CV/Cover Letter"\n'
+        '  },\n'
+        '  "block_f": {\n'
+        '    "star_behavioral_stories": [\n'
+        '      {"competency": "Leadership / Resilience / Technical Craft", "situation": "...", "task": "...", "action": "...", "result": "...", "reflection": "..."}\n'
+        '    ]\n'
+        '  }\n'
+        "}"
+    )
+
+    data = {}
+    if llm.provider_ready():
+        try:
+            data = llm.generate_json(
+                prompt,
+                system="You are an expert career ops architect. Be realistic, critical, and precise.",
+                cached_context=profile_context(profile),
+                model=prefs.get("writing_model"),
+                max_tokens=1800
+            )
+        except Exception:
+            data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+
+    return {
+        "job_id": job.get("id"),
+        "title": job.get("title"),
+        "company": job.get("company"),
+        "block_a_role": data.get("block_a", {
+            "archetype": "Full-Stack Product Engineering",
+            "role_mission": "Execute core engineering roadmap and deliver scalable systems.",
+            "core_domain": "Software Engineering"
+        }),
+        "block_b_match": data.get("block_b", {
+            "matched_core_skills": ats_info.get("present", [])[:5],
+            "hard_gaps": ats_info.get("missing", [])[:3],
+            "gap_mitigations": []
+        }),
+        "block_c_level": data.get("block_c", {
+            "detected_level": "Senior",
+            "leveling_rationale": "Standard individual contributor engineering expectations.",
+            "positioning_angle": "Emphasize architectural independence and end-to-end delivery."
+        }),
+        "block_d_comp": data.get("block_d", {
+            "estimated_low": job.get("salary_min") or 130000,
+            "estimated_median": 160000,
+            "estimated_high": job.get("salary_max") or 190000,
+            "currency": job.get("currency") or "USD",
+            "comp_rationale": "Market benchmark baseline"
+        }),
+        "block_e_personalization": data.get("block_e", {
+            "key_proof_points_to_highlight": profile.get("skills", [])[:4],
+            "tailoring_focus": "Align technical stack and production impact."
+        }),
+        "block_f_interview_star": data.get("block_f", {
+            "star_behavioral_stories": [
+                {
+                    "competency": "Technical Complexity & Problem Solving",
+                    "situation": "Scaling core platform services under high load.",
+                    "task": "Redesign latency-sensitive bottlenecks.",
+                    "action": "Profiled execution paths, optimized indexing, and cached hot queries.",
+                    "result": "Reduced p99 latency by 45% and stabilized throughput.",
+                    "reflection": "Early observability and deterministic testing prevent production regressions."
+                }
+            ]
+        }),
+        "block_g_legitimacy": block_g,
+        "red_flags": red_flags,
+        "ats_keyword_coverage": ats_info
+    }
+

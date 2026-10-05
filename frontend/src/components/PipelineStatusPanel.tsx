@@ -1,6 +1,7 @@
 import React from 'react';
 import { Terminal, Activity, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 import type { RunViewV2 } from '../api/v2Client';
+import AgentSwarmRadar from './AgentSwarmRadar';
 
 interface PipelineStatusPanelProps {
   runs: RunViewV2[];
@@ -40,6 +41,10 @@ export default function PipelineStatusPanel({ runs, activeRunId, onRefreshRuns }
         >
           <RefreshCw size={13} />
         </button>
+      </div>
+
+      <div className="w-full shrink-0 h-[220px]">
+        <AgentSwarmRadar />
       </div>
 
       {/* Active Runs Section */}

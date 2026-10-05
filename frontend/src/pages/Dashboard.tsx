@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Job } from '../types';
 import React, { useState, useEffect } from 'react';
-import { Briefcase, CheckCircle, AlertCircle, Terminal, TrendingUp, Compass, Award, RefreshCw, Zap, ArrowUpRight, Clock } from 'lucide-react';
+import { Briefcase, CheckCircle, AlertCircle, Terminal, TrendingUp, Compass, Award, RefreshCw, Zap, ArrowUpRight, Clock, Shield, User, Link2 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { apiFetch } from '../utils/api';
 import { motion } from 'framer-motion';
@@ -29,7 +29,7 @@ function AnimatedCounter({ value, suffix = '' }: { value: number; suffix?: strin
 }
 
 export default function Dashboard() {
-  const { readiness, checkReadiness } = useAppStore();
+  const { readiness, checkReadiness, recruiterScore, fetchRecruiterScore, profile, fetchProfile } = useAppStore();
   
   const [stats, setStats] = useState<any>({
     total_saved: 0,
@@ -65,6 +65,8 @@ export default function Dashboard() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchDashboardData();
+    if (!recruiterScore.loaded && !recruiterScore.loading) fetchRecruiterScore();
+    if (!profile) fetchProfile();
     const interval = setInterval(fetchDashboardData, 20000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -117,6 +119,189 @@ export default function Dashboard() {
           { label: 'offers', value: stats.total_offer || 0, tone: 'ok' },
         ]}
       />
+
+      {/* ═══════════════════════════════════════════════
+          ATS RESUME HEALTH — Verified Profile Card
+         ═══════════════════════════════════════════════ */}
+      {(profile || recruiterScore.data) && (
+        <motion.div
+          initial={{ opacity: 0, y: 20, filter: 'blur(4px)' }}
+          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          transition={{ type: 'spring', stiffness: 250, damping: 28, delay: 0.15 }}
+          className="surface-panel p-6 md:p-8 space-y-6"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500/15 to-purple-500/15">
+                <Shield size={18} className="text-indigo-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white tracking-tight">ATS Resume Health</h2>
+                <p className="text-[10px] text-zinc-500 font-medium tracking-wider uppercase">
+                  HackerRank hiring-agent taxonomy · Rule-based · Zero LLM cost
+                </p>
+              </div>
+            </div>
+            <MagneticButton
+              onClick={() => { fetchRecruiterScore(); }}
+              disabled={recruiterScore.loading}
+              className="btn-minimal flex items-center gap-2 text-xs"
+            >
+              <RefreshCw size={13} className={recruiterScore.loading ? 'animate-spin text-indigo-400' : 'text-zinc-500'} />
+              Re-scan
+            </MagneticButton>
+          </div>
+
+          {/* Profile Identity Strip */}
+          {profile && (
+            <div className="flex flex-wrap items-center gap-4 px-4 py-3 rounded-xl bg-white/[0.015] border border-white/[0.04]">
+              <div className="flex items-center gap-2 text-sm">
+                <User size={14} className="text-zinc-500" />
+                <span className="text-zinc-200 font-medium">{profile.name || 'Unknown'}</span>
+              </div>
+              {profile.email && (
+                <div className="text-xs text-zinc-500">{profile.email}</div>
+              )}
+              {profile.links?.github && (
+                <div className="flex items-center gap-1.5 text-xs text-indigo-400/80">
+                  <Link2 size={12} />
+                  <span>{profile.links.github.replace('https://github.com/', '@')}</span>
+                </div>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold tracking-wider">
+                  {(profile.skills || []).length} SKILLS
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold tracking-wider">
+                  {(profile.experience || []).length} ROLES
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Score Body */}
+          {recruiterScore.loading && (
+            <div className="text-center py-8">
+              <motion.div
+                animate={{ opacity: [0.3, 0.6] }}
+                transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
+                className="text-sm text-indigo-300"
+              >
+                Scoring resume against HackerRank taxonomy...
+              </motion.div>
+            </div>
+          )}
+
+          {recruiterScore.data && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left: Score Gauge + Summary */}
+              <div className="flex flex-col items-center justify-center gap-4">
+                {/* Radial gauge */}
+                <div className="relative w-32 h-32">
+                  <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                    <circle cx="18" cy="18" r="15.9155" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="2.5" />
+                    <motion.circle
+                      cx="18" cy="18" r="15.9155" fill="none"
+                      stroke="url(#atsGrad)"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray="100"
+                      initial={{ strokeDashoffset: 100 }}
+                      animate={{ strokeDashoffset: 100 - Math.min(100, (recruiterScore.data.total / 120) * 100) }}
+                      transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                    />
+                    <defs>
+                      <linearGradient id="atsGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#6366f1" />
+                        <stop offset="100%" stopColor="#a855f7" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-3xl font-bold text-white tracking-tight">
+                      <AnimatedCounter value={recruiterScore.data.total} />
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-semibold tracking-wider">/ 120</span>
+                  </div>
+                </div>
+
+                {/* Bonus & Deduction pills */}
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
+                    +{recruiterScore.data.bonus} bonus
+                  </span>
+                  <span className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold">
+                    {recruiterScore.data.deduction} deduction
+                  </span>
+                </div>
+              </div>
+
+              {/* Center: Category Breakdown */}
+              <div className="space-y-4">
+                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-[0.15em]">Category Breakdown</h3>
+                {[
+                  { key: 'open_source', label: 'Open Source', max: 35, color: 'from-cyan-500 to-blue-500', glow: 'rgba(6,182,212,0.4)' },
+                  { key: 'self_projects', label: 'Self Projects', max: 30, color: 'from-purple-500 to-pink-500', glow: 'rgba(168,85,247,0.4)' },
+                  { key: 'production', label: 'Production', max: 25, color: 'from-emerald-500 to-teal-400', glow: 'rgba(52,211,153,0.4)' },
+                  { key: 'technical_skills', label: 'Technical Skills', max: 10, color: 'from-amber-500 to-orange-400', glow: 'rgba(251,191,36,0.4)' },
+                ].map(cat => {
+                  const val = recruiterScore.data!.by_category[cat.key] || 0;
+                  const pct = Math.min(100, (val / cat.max) * 100);
+                  return (
+                    <div key={cat.key}>
+                      <div className="flex justify-between text-xs mb-1.5">
+                        <span className="text-zinc-400 font-medium">{cat.label}</span>
+                        <span className="text-zinc-300 font-bold text-xs-mono">{val} / {cat.max}</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-zinc-800/60 rounded-full overflow-hidden">
+                        <motion.div
+                          className={`h-full rounded-full bg-gradient-to-r ${cat.color}`}
+                          style={{ boxShadow: `0 0 12px ${cat.glow}` }}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: 1, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Right: Per-Rule Rationale */}
+              <div className="space-y-2 max-h-[260px] overflow-y-auto custom-scrollbar pr-1">
+                <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-[0.15em] sticky top-0 bg-transparent pb-1">Rule Rationale</h3>
+                {recruiterScore.data.rationale.map((rule: any, idx: number) => {
+                  const isPositive = rule.delta > 0;
+                  return (
+                    <motion.div
+                      key={`${rule.rule}-${idx}`}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.06 + 0.5 }}
+                      className={`flex items-start gap-2.5 px-3 py-2 rounded-lg text-xs ${
+                        isPositive
+                          ? 'bg-emerald-500/[0.06] border border-emerald-500/10'
+                          : 'bg-rose-500/[0.06] border border-rose-500/10'
+                      }`}
+                    >
+                      <span className={`font-mono font-bold shrink-0 w-8 text-right ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {rule.delta > 0 ? `+${rule.delta}` : rule.delta}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className={`leading-relaxed ${isPositive ? 'text-emerald-200/80' : 'text-rose-200/80'}`}>
+                          {rule.note}
+                        </div>
+                        <div className="text-[9px] text-zinc-600 mt-0.5 capitalize">{rule.category.replace(/_/g, ' ')}</div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Header */}
       <div className="flex items-end justify-between px-1">

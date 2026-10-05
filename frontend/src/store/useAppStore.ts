@@ -9,6 +9,13 @@ interface RecruiterScoreState {
   data?: RecruiterScoreReport;
 }
 
+export interface TerminalLog {
+  id: string;
+  time: string;
+  msg: string;
+  type: string;
+}
+
 interface AppState {
   readiness: {
     ai_key: boolean;
@@ -20,6 +27,7 @@ interface AppState {
   secrets: Secrets | null;
   isLoading: boolean;
   recruiterScore: RecruiterScoreState;
+  terminalLogs: TerminalLog[];
   
   checkReadiness: () => Promise<void>;
   fetchProfile: () => Promise<void>;
@@ -28,6 +36,7 @@ interface AppState {
   updateProfile: (profile: Profile) => void;
   updatePrefs: (prefs: Preferences, secrets?: Secrets) => void;
   setRecruiterScore: (state: Partial<RecruiterScoreState>) => void;
+  addTerminalLog: (log: TerminalLog) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -43,6 +52,15 @@ export const useAppStore = create<AppState>((set) => ({
   },
   isLoading: false,
   recruiterScore: { loading: false, loaded: false },
+  terminalLogs: [
+    { id: '1', time: new Date().toISOString(), msg: '[AOS] Boot sequence initiated', type: 'system' },
+    { id: '2', time: new Date().toISOString(), msg: '[SYS] Unified SSE pipeline active', type: 'info' },
+    { id: '3', time: new Date().toISOString(), msg: '[SKILLS] Ponytail protocol active', type: 'success' },
+    { id: '4', time: new Date().toISOString(), msg: '[SYS] Autopilot ready for candidate Animesh Shukla', type: 'system' },
+  ],
+  addTerminalLog: (log) => set((s) => ({
+    terminalLogs: [...s.terminalLogs, log].slice(-30)
+  })),
 
     checkReadiness: async () => {
     // Skip if page is not visible

@@ -31,7 +31,7 @@ def _now() -> str:
 _local = threading.local()
 
 class _CursorManager:
-    def __init__(self, row_factory=sqlite3.Row):
+    def __init__(self, row_factory=sqlite3.Row, readonly: bool = False):
         if not hasattr(_local, "conn"):
             # We enforce auto-commit behavior (isolation_level=None) to manage transactions manually
             _local.conn = sqlite3.connect(config.DB_PATH, timeout=10.0, isolation_level=None)
@@ -39,9 +39,11 @@ class _CursorManager:
             _local.conn.execute("PRAGMA journal_mode=WAL;")
             _local.conn.execute("PRAGMA synchronous=NORMAL;")
             _local.conn.execute("PRAGMA busy_timeout=5000;")
+            _local.depth = 0
             
         self.conn = _local.conn
         self.row_factory = row_factory
+        self.readonly = readonly
 
     def __enter__(self):
         if self.row_factory:
@@ -50,19 +52,37 @@ class _CursorManager:
             self.conn.row_factory = None
             
         self.cur = self.conn.cursor()
-        self.cur.execute("BEGIN IMMEDIATE")
+        if not self.readonly:
+            current_depth = getattr(_local, "depth", 0)
+            if current_depth == 0:
+                self.cur.execute("BEGIN IMMEDIATE")
+            else:
+                self.cur.execute(f"SAVEPOINT sp_{current_depth}")
+            _local.depth = current_depth + 1
         return self.cur
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            self.cur.execute("COMMIT")
-        else:
-            self.cur.execute("ROLLBACK")
+        if not self.readonly:
+            _local.depth = max(0, getattr(_local, "depth", 1) - 1)
+            if _local.depth == 0:
+                if exc_type is None:
+                    self.cur.execute("COMMIT")
+                else:
+                    self.cur.execute("ROLLBACK")
+            else:
+                if exc_type is None:
+                    self.cur.execute(f"RELEASE SAVEPOINT sp_{_local.depth}")
+                else:
+                    self.cur.execute(f"ROLLBACK TO SAVEPOINT sp_{_local.depth}")
         self.cur.close()
         # Do not close connection to maintain thread-local pool
 
-def get_conn():
-    return _CursorManager()
+def get_conn(readonly: bool = False):
+    return _CursorManager(readonly=readonly)
+
+def get_cursor(row_factory=sqlite3.Row, readonly: bool = False):
+    """Context manager returning an active SQLite cursor with nested transaction support."""
+    return _CursorManager(row_factory=row_factory, readonly=readonly)
 
 def init_db() -> None:
     """Create tables if they do not exist. Safe to call on every launch."""

@@ -44,10 +44,12 @@ class MockSlowAdapter(SourceAdapter):
         prefs: dict[str, Any],
         cancel_token: Optional[CancellationToken] = None,
     ) -> list[dict[str, Any]]:
-        for _ in range(50):
-            if cancel_token and cancel_token.is_cancelled():
-                break
-            time.sleep(0.1)
+        # Deliberately ignores cancel_token (like a stuck socket read) and
+        # sleeps past BOTH source_timeout_sec (0.4s) and global_timeout_sec
+        # (1.0s). This guarantees the orchestrator - not this adapter - decides
+        # the outcome, so "slow_mock times out" is deterministic instead of a
+        # race between cooperative-cancel and the orchestrator's deadline poll.
+        time.sleep(3.0)
         return []
 
 

@@ -17,7 +17,7 @@ export function getCookie(name: string): string | undefined {
   return undefined;
 }
 
-export const apiFetch = async (url: string, options: FetchOptions = {}) => {
+export const apiFetch = async (url: string, options: FetchOptions = {}): Promise<Response> => {
   const { showToastOnError = true, ...fetchOptions } = options;
 
   // Make sure we always include credentials so any csrftoken cookie round-trips.
@@ -44,14 +44,20 @@ export const apiFetch = async (url: string, options: FetchOptions = {}) => {
     if (!response.ok) {
       let errorMessage = `HTTP Error ${response.status}`;
       try {
-        const errorData = await response.json();
-        if (errorData.detail) {
-          errorMessage = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+        // Read the body EXACTLY once (a failed .json() leaves the stream
+        // consumed; calling .text() afterwards throws "body stream already
+        // read", which used to surface as a bogus "Network Error" toast).
+        const raw = await response.text();
+        try {
+          const errorData = JSON.parse(raw);
+          if (errorData?.detail) {
+            errorMessage = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+          }
+        } catch {
+          if (raw) errorMessage = raw.substring(0, 100);
         }
       } catch {
-        // Not JSON
-        const textData = await response.text();
-        if (textData) errorMessage = textData.substring(0, 100);
+        // Body unreadable (network-level failure) — keep the status-code message.
       }
 
       if (showToastOnError) {

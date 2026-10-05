@@ -5,6 +5,7 @@ thread (to avoid Streamlit event-loop conflicts) for JS-heavy job boards.
 """
 from __future__ import annotations
 
+import queue
 import threading
 import httpx
 import socket
@@ -105,64 +106,76 @@ def _scrape_with_httpx(url: str) -> str:
     except Exception:
         pass
         
-    # State-of-the-Art JA3/JA4 Fingerprint Evasion (Level 4 Ouroboros)
+    # State-of-the-Art JA3/JA4 Fingerprint Evasion (curl_cffi)
     try:
-        ip = validate_url_for_ssrf(url)
-        parsed = urlparse(url)
-        pinned_url = url.replace(parsed.hostname, ip)
+        validate_url_for_ssrf(url)
         proxy = config.proxy_url()
         proxies = {"http": proxy, "https": proxy} if proxy else None
         
-        # Impersonate Chrome 120 to completely bypass Cloudflare/DataDome TLS checks
+        # Impersonate Chrome 120 to bypass Cloudflare/DataDome TLS checks without breaking TLS SNI
         resp = cffi_requests.get(
-            pinned_url, 
+            url, 
             impersonate="chrome120", 
-            headers={"Host": parsed.hostname}, 
+            headers=_browser_headers(), 
             proxies=proxies,
             timeout=15.0, 
             allow_redirects=True,
             verify=True
         )
-        if resp.status_code == 200:
+        if resp.status_code == 200 and len(resp.text) > 100:
             from .sources.base import strip_html
             return strip_html(resp.text)
     except Exception:
         pass
+
+    # Direct HTTPX Fallback
+    try:
+        validate_url_for_ssrf(url)
+        proxy = config.proxy_url()
+        with httpx.Client(headers=_browser_headers(), timeout=15.0, follow_redirects=True, proxy=proxy if proxy else None) as client:
+            resp = client.get(url)
+            if resp.status_code == 200 and len(resp.text) > 100:
+                from .sources.base import strip_html
+                return strip_html(resp.text)
+    except Exception:
+        pass
+
     return ""
 
-
-import queue
 
 _pw_queue = queue.Queue()
 _pw_thread = None
 
 def _pw_manager():
-    from playwright.sync_api import sync_playwright
-    from playwright_stealth import stealth_sync
-    with sync_playwright() as p:
-        proxy_url = config.proxy_url()
-        proxy_settings = {"server": proxy_url} if proxy_url else None
-        browser = p.chromium.launch(headless=True, proxy=proxy_settings)
+    # Stealth-first engine selection: Camoufox when installed/fetched,
+    # vanilla Chromium otherwise. See src/stealth_browser.py.
+    from .stealth_browser import last_engine, launch_sync
+
+    with launch_sync(headless=True) as browser:
         while True:
             task = _pw_queue.get()
             if task is None:
                 break
             url, result_container, done_event = task
-            
+
             try:
                 time.sleep(random.uniform(1.2, 3.8))
-                context = browser.new_context(
-                    user_agent=_random_ua(),
-                    locale="en-US",
-                    timezone_id="America/New_York",
-                    viewport={"width": 1920, "height": 1080},
-                )
+                if last_engine == "camoufox":
+                    # Camoufox owns UA/timezone/viewport as one consistent
+                    # fingerprint; overriding any of them creates leaks.
+                    context = browser.new_context(locale="en-US")
+                else:
+                    context = browser.new_context(
+                        user_agent=_random_ua(),
+                        locale="en-US",
+                        timezone_id="America/New_York",
+                        viewport={"width": 1920, "height": 1080},
+                    )
                 page = context.new_page()
-                stealth_sync(page)
-                
+
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2000)
-                
+
                 body = page.query_selector("body")
                 if body:
                     result_container.append(body.inner_text())

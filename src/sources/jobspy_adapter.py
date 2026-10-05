@@ -22,8 +22,12 @@ def fetch(query: str, limit: int, prefs: dict[str, Any]) -> list[dict[str, Any]]
         return []
 
     # Map settings or defaults
-    # For now, default to the big 4 job boards
-    site_names = ["linkedin", "indeed", "glassdoor", "zip_recruiter"]
+    # LinkedIn excluded by default: ~10 pages/IP rate limit + ToS restriction.
+    # Opt in via JOBSPY_LINKEDIN_ENABLED=1 (researched 2026-08).
+    import os
+    site_names = ["indeed", "glassdoor", "zip_recruiter"]
+    if os.getenv("JOBSPY_LINKEDIN_ENABLED", "").lower() in ("1", "true", "yes"):
+        site_names.insert(0, "linkedin")
     location = prefs.get("location") or "Remote"
     
     # Optional filtering parameters based on prefs

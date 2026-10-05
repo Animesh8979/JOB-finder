@@ -19,6 +19,16 @@ def db_isolation(monkeypatch, tmp_path):
     # Patch config variables
     monkeypatch.setattr("src.config.DATA_DIR", isolated_data)
     monkeypatch.setattr("src.config.DB_PATH", isolated_db)
+
+    # Isolate secrets/config files so tests never read or write the real vault,
+    # the real Fernet key, or the real preferences.
+    monkeypatch.setattr("src.config.SECRETS_PATH", isolated_data / "secrets.json")
+    monkeypatch.setattr("src.config.FERNET_KEY_PATH", isolated_data / ".fernet_key")
+    monkeypatch.setattr("src.config.PREFS_PATH", isolated_data / "preferences.json")
+    monkeypatch.setattr("src.config.ENV_PATH", isolated_data / ".env")
+    # PROFILE_PATH is computed from the REAL DATA_DIR at import time — patch it too,
+    # or tests would read/write the user's actual profile.json.
+    monkeypatch.setattr("src.config.PROFILE_PATH", isolated_data / "profile.json")
     
     outputs_dir = isolated_data / "outputs"
     profiles_dir = isolated_data / "profiles"

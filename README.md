@@ -11,6 +11,16 @@ With the newly completely overhauled **React Command Center**, the system provid
 5. **Drafts** personalized outreach emails to recruiters (never auto-sent).
 6. **Tracks** everything in a unified dashboard.
 
+> ### 🦊 Stealth Engine (optional, free)
+> Browser automation runs on **Camoufox** — an open-source anti-detect Firefox with
+> C++-level fingerprint spoofing (navigator, WebGL, fonts, WebRTC) and humanized cursor
+> movement — when installed. Without it, everything transparently falls back to Playwright
+> Chromium. `setup.bat` installs it automatically; binaries stay in `data/camoufox` (D:).
+> Manage manually: `python -m src.stealth_browser --status` / `--fetch`.
+
+> ### ⌨️ Command Center Shortcuts
+> `/` or `Ctrl+K` → focus search · `Esc` → close drawer
+
 > ### 🔒 The Review-First Principle
 > This tool is **review-first**. The AI prepares everything, but **you** make the final click to submit an application or send an email. Fully automatic bots can get your LinkedIn account banned and email blacklisted. This tool ensures you remain safe, credible, and in control.
 

@@ -64,6 +64,20 @@ echo.
 echo Installing the browser for review-first apply (Chromium)...
 "%VPY%" -m playwright install chromium
 
+REM --- 5) OPTIONAL stealth upgrade: Camoufox anti-detect browser ---
+REM Free, open-source Firefox fork w/ Playwright API + C++-level fingerprint
+REM spoofing. Best-effort: if install/download fails, the app silently keeps
+REM using Chromium (src/stealth_browser.py handles the fallback).
+echo.
+echo Installing optional stealth browser (Camoufox)...
+"%VPY%" -m pip install -q -U "camoufox[geoip]"
+if errorlevel 1 (
+  echo [skip] camoufox package not installed - continuing with Chromium stealth fallback.
+) else (
+  "%VPY%" -m src.stealth_browser --fetch
+  if errorlevel 1 echo [skip] Camoufox download failed - Chromium fallback remains active.
+)
+
 echo.
 echo ============================================
 echo    Setup complete!  Now double-click run.bat

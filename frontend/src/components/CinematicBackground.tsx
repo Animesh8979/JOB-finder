@@ -14,13 +14,23 @@ export default function CinematicBackground() {
   const orb3Ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let rafId: number;
+    // Respect OS-level reduced motion; render a static aurora instead.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    let rafId: number | null = null;
     let targetX = 0.5, targetY = 0.5;
     let currentX = 0.5, currentY = 0.5;
+
+    const EPSILON = 0.0004; // ~0.5px at 1440w — below this, parallax is invisible
+
+    const startLoop = () => {
+      if (rafId === null) rafId = requestAnimationFrame(tick);
+    };
 
     const onMouseMove = (e: MouseEvent) => {
       targetX = e.clientX / window.innerWidth;
       targetY = e.clientY / window.innerHeight;
+      startLoop(); // wake the loop only when there is actual motion to chase
     };
 
     const tick = () => {
@@ -41,15 +51,20 @@ export default function CinematicBackground() {
         orb3Ref.current.style.transform = `translate(${dx * 20}px, ${dy * -40}px)`;
       }
 
+      // Idle shutdown: when settled, stop scheduling frames entirely so the
+      // tab costs zero CPU until the next mousemove (was: infinite 60fps loop).
+      if (Math.abs(targetX - currentX) < EPSILON && Math.abs(targetY - currentY) < EPSILON) {
+        rafId = null;
+        return;
+      }
       rafId = requestAnimationFrame(tick);
     };
 
     window.addEventListener('mousemove', onMouseMove, { passive: true });
-    rafId = requestAnimationFrame(tick);
 
     return () => {
       window.removeEventListener('mousemove', onMouseMove);
-      cancelAnimationFrame(rafId);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, []);
 
@@ -70,7 +85,7 @@ export default function CinematicBackground() {
           borderRadius: '50%',
           background: 'radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, transparent 70%)',
           filter: 'blur(70px)',
-          animation: 'cosmicDrift 25s ease-in-out infinite reverse',
+          animation: undefined,
           transition: 'transform 0.1s linear',
         }}
       />
@@ -85,7 +100,7 @@ export default function CinematicBackground() {
           borderRadius: '50%',
           background: 'radial-gradient(circle, rgba(168, 85, 247, 0.08) 0%, transparent 70%)',
           filter: 'blur(55px)',
-          animation: 'cosmicDrift 30s ease-in-out infinite',
+          animation: undefined,
           transition: 'transform 0.1s linear',
         }}
       />
@@ -100,7 +115,7 @@ export default function CinematicBackground() {
           borderRadius: '50%',
           background: 'radial-gradient(circle, rgba(56, 189, 248, 0.06) 0%, transparent 70%)',
           filter: 'blur(50px)',
-          animation: 'cosmicDrift 22s ease-in-out infinite',
+          animation: undefined,
           transition: 'transform 0.1s linear',
         }}
       />

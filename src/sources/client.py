@@ -95,6 +95,56 @@ def get_json(
     raise RuntimeError("get_json: exhausted retries with no exception captured")
 
 
+def post_json(
+    url: str,
+    json_data: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    retries: int = DEFAULT_RETRIES,
+) -> Any:
+    """POST to a URL with JSON body and return parsed response JSON."""
+    h = {
+        "User-Agent": _ua(),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if headers:
+        h.update(headers)
+
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            resp = httpx.post(url, json=json_data or {}, headers=h, timeout=timeout, follow_redirects=True)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                last_exc = httpx.HTTPStatusError(
+                    f"Server returned {resp.status_code}", request=resp.request, response=resp
+                )
+                if attempt < retries - 1:
+                    _backoff(attempt)
+                    continue
+                resp.raise_for_status()
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.RequestError as e:
+            last_exc = e
+            if attempt < retries - 1 and _is_transient(e):
+                _backoff(attempt)
+                continue
+            raise
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code < 500 and e.response.status_code != 429:
+                raise
+            last_exc = e
+            if attempt < retries - 1:
+                _backoff(attempt)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("post_json: exhausted retries with no exception captured")
+
+
 def _backoff(attempt: int) -> None:
     """Exponential backoff with jitter: 0.5s, 1s, 2s, 4s... + random jitter."""
     base = 0.5 * (2 ** attempt)

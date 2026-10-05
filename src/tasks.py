@@ -4,8 +4,11 @@ from typing import Optional
 import time
 import random
 
-# Use a purely local SQLite task queue, dropping the Redis requirement.
-huey = SqliteHuey(filename=str(config.DATA_DIR / 'huey.db'))
+# Use a purely local SQLite task queue with WAL mode to eliminate write-lock starvation.
+huey = SqliteHuey(
+    filename=str(config.DATA_DIR / 'huey.db'),
+    pragmas={"journal_mode": "wal", "busy_timeout": 5000, "synchronous": "normal"}
+)
 
 @huey.task(retries=3, retry_delay=10)
 def run_apify_scraping_task(query: str, location: str, limit: int, run_id: Optional[str] = None):

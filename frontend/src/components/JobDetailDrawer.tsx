@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState } from 'react';
 import { X, Building, MapPin, DollarSign, ShieldCheck, Sparkles, FileText, Send, ExternalLink, Loader2 } from 'lucide-react';
 import { triggerAuditV2, triggerApplyV2, type JobViewV2, type RunViewV2 } from '../api/v2Client';
@@ -20,8 +21,28 @@ export default function JobDetailDrawer({
 }: JobDetailDrawerProps) {
   const [isAuditing, setIsAuditing] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
+  const [agReport, setAgReport] = useState<any>(null);
+  const [isLoadingAg, setIsLoadingAg] = useState(false);
 
   if (!job) return null;
+
+  const handleFetchAgEval = async () => {
+    setIsLoadingAg(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/ag-eval`);
+      if (res.ok) {
+        const data = await res.json();
+        setAgReport(data);
+        toast.success("7-Block CareerOps Evaluation Loaded!");
+      } else {
+        toast.error("Failed to load A-G evaluation.");
+      }
+    } catch {
+      toast.error("Network error fetching A-G evaluation.");
+    } finally {
+      setIsLoadingAg(false);
+    }
+  };
 
   const handleRunAudit = async () => {
     setIsAuditing(true);
@@ -131,6 +152,15 @@ export default function JobDetailDrawer({
 
           <div className="flex items-center gap-2">
             <button
+              onClick={handleFetchAgEval}
+              disabled={isLoadingAg}
+              className="px-3.5 py-2 rounded-xl bg-indigo-500/20 border border-indigo-500/40 hover:bg-indigo-500/30 text-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
+            >
+              {isLoadingAg ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              <span>A–G Rubric</span>
+            </button>
+
+            <button
               onClick={handleRunAudit}
               disabled={isAuditing}
               className="px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-white text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
@@ -161,6 +191,78 @@ export default function JobDetailDrawer({
         {/* Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
           
+          {/* A-G CareerOps Strategic Evaluation Report Card */}
+          {agReport && (
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-500/[0.08] to-purple-500/[0.05] border border-indigo-500/30 space-y-4">
+              <div className="flex items-center justify-between border-b border-indigo-500/20 pb-3">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-2">
+                  <Sparkles size={16} />
+                  CareerOps A–G 7-Block Evaluation
+                </h3>
+                <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-200 text-xs font-mono font-bold">
+                  {agReport.block_a_role?.archetype || 'Engineering'}
+                </span>
+              </div>
+
+              {/* Block G Legitimacy Warning Badge */}
+              {agReport.block_g_legitimacy && (
+                <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                  agReport.block_g_legitimacy.risk_level === 'HIGH' || agReport.block_g_legitimacy.is_scam
+                    ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                    : agReport.block_g_legitimacy.work_auth_blocked
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                }`}>
+                  <span className="font-semibold">
+                    🛡️ Block G Posting Legitimacy: {agReport.block_g_legitimacy.legitimacy_score}% ({agReport.block_g_legitimacy.risk_level} Risk)
+                  </span>
+                  {agReport.block_g_legitimacy.is_ghost_job && <span>👻 Ghost Job Flag</span>}
+                  {agReport.block_g_legitimacy.work_auth_blocked && <span>🚫 Sponsorship Blocked</span>}
+                </div>
+              )}
+
+              {/* Block B Skill Gaps & Mitigations */}
+              <div className="space-y-2">
+                <div className="text-xs font-bold text-zinc-300">Block B: Skill Match & Gaps</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {agReport.block_b_match?.matched_core_skills?.map((s: string, idx: number) => (
+                    <span key={idx} className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-mono">
+                      ✓ {s}
+                    </span>
+                  ))}
+                  {agReport.block_b_match?.hard_gaps?.map((g: string, idx: number) => (
+                    <span key={idx} className="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-xs font-mono">
+                      ✕ {g}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Block C Seniority & Level Strategy */}
+              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10 text-xs text-zinc-300 space-y-1">
+                <div className="font-semibold text-zinc-200">
+                  Leveling Strategy ({agReport.block_c_level?.detected_level}):
+                </div>
+                <p className="text-zinc-400">{agReport.block_c_level?.positioning_angle}</p>
+              </div>
+
+              {/* Block F STAR+R Behavioral Interview Stories */}
+              {agReport.block_f_interview_star?.star_behavioral_stories?.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold text-zinc-300">Block F: Recommended STAR+R Interview Story</div>
+                  {agReport.block_f_interview_star.star_behavioral_stories.slice(0, 1).map((star: any, idx: number) => (
+                    <div key={idx} className="p-3 rounded-xl bg-white/[0.02] border border-white/10 text-xs space-y-1.5">
+                      <div className="font-semibold text-indigo-300">{star.competency}</div>
+                      <div><strong className="text-zinc-400">Situation/Task:</strong> {star.situation} {star.task}</div>
+                      <div><strong className="text-zinc-400">Action & Result:</strong> {star.action} <span className="text-emerald-400 font-semibold">{star.result}</span></div>
+                      <div className="text-purple-300 italic"><strong className="text-zinc-400">Reflection:</strong> {star.reflection}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Audit / Fit Breakdown Section */}
           {job.match_reason && (
             <div className="p-4 rounded-xl bg-indigo-500/[0.06] border border-indigo-500/20 space-y-2">

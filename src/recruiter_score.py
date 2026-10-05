@@ -54,10 +54,10 @@ class ScoreReport:
 
 
 _NUMERIC_BULLET_RE = re.compile(
-    r"(?m)^\s*[-*+•]\s+.*\b("
-    r"\d+\s*%|\d+\s*x|\d+\s*\+|\$[\d,.]+|\d{2,}\s*(users|customers|requests|sessions|maus|dau|qps|rps)|"
-    r"reduced\s+by\s+\d+|increased\s+by\s+\d+|saved\s+\$?\d+"
-    r")\b",
+    r"(?m)^\s*[-*+•]\s+.*("
+    r"\d+\s*%|\d+\s*x|\d+\s*\+|\$[\d,.]+|\d+[- ]*(?:\+|-)?\s*(?:tiers?|platforms?|modules?|models?|agents?|pipelines?|boards?|sources?|scores?|kpis?|metrics?|tools?|apis?|users?|customers?|requests?|sessions?|maus?|daus?|qps|rps|pages?)|"
+    r"(?:reduced|increased|improved|saved|built|engineered|shipped|scaled|drove|generated)\s+(?:by\s+)?\d+"
+    r")(?:\W|$)",
     re.IGNORECASE,
 )
 _SECTION_RE = re.compile(
@@ -69,14 +69,15 @@ _ACTION_VERB_RE = re.compile(
     r"\b("
     r"built|designed|led|shipped|launched|migrated|automated|optimized|"
     r"reduced|increased|owned|architected|deployed|mentored|refactored|"
-    r"implemented|developed|engineered|delivered"
+    r"implemented|developed|engineered|delivered|authored|presented|drove|"
+    r"layered|structured"
     r")\b",
     re.IGNORECASE,
 )
 _GITHUB_HANDLE_RE = re.compile(r"(?<!\w)github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))", re.IGNORECASE)
 
 
-def _clip(text: str, *, n: int = 4000) -> str:
+def _clip(text: str, *, n: int = 25000) -> str:
     """Avoid pathological resumes overflowing the regex budget."""
     if not text:
         return ""

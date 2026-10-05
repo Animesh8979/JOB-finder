@@ -22,9 +22,9 @@ from sklearn.feature_extraction.text import CountVectorizer
 from . import llm, recruiter_score
 from .profile_parser import profile_context
 
-# Configurable embedder. Default stays MiniLM to keep existing ChromaDB embeddings
-# numerically valid; opt-in to bge-small via env for better recall on next full re-score.
-_DEFAULT_EMBEDDER = "all-MiniLM-L6-v2"
+# Configurable embedder. Standardized on BGE-small-en-v1.5 (512-token context, 384-dim,
+# MTEB 62.17) for superior retrieval recall without dimensional migration.
+_DEFAULT_EMBEDDER = "BAAI/bge-small-en-v1.5"
 EMBEDDER_NAME = os.environ.get("JOB_FINDER_EMBEDDER") or _DEFAULT_EMBEDDER
 
 # Known-good 384-dim models. We refuse to bootstrap any other model unless the user
@@ -51,8 +51,11 @@ _EMBED_DIM = 384
 
 # Chroma collection suffix — bumped when we change embedder so we don't mix
 # incompatible vector spaces in the same collection.
-# Recent commit history: MiniLM = "jobs" (legacy). bge = "jobs_bge" (new space).
-_COLLECTION_NAME = "jobs" if EMBEDDER_NAME == _DEFAULT_EMBEDDER else "jobs_bge"
+# MiniLM = "jobs" (legacy). bge = "jobs_bge" (new space).
+_COLLECTION_NAME = "jobs_bge" if "bge" in EMBEDDER_NAME.lower() else "jobs"
+
+# Asymmetric query instruction prefix required by BGE models for maximum retrieval recall
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 _encoder_lock = threading.Lock()
 _encoder_instance = None
@@ -63,6 +66,18 @@ def _get_encoder() -> SentenceTransformer:
         if _encoder_instance is None:
             _encoder_instance = SentenceTransformer(EMBEDDER_NAME, device="cpu")
     return _encoder_instance
+
+
+def encode_query(text: str) -> np.ndarray:
+    """Encode a search query or profile context using the active embedder.
+
+    BGE models require the asymmetric query instruction prefix for maximum retrieval accuracy.
+    """
+    encoder = _get_encoder()
+    query_text = text
+    if "bge" in EMBEDDER_NAME.lower() and not text.startswith(BGE_QUERY_PREFIX):
+        query_text = BGE_QUERY_PREFIX + text
+    return encoder.encode([query_text])[0]
 
 
 def preload_encoder() -> None:
@@ -143,8 +158,7 @@ def pre_filter_jobs(
     
     ctx = profile_context(profile)
     try:
-        encoder = _get_encoder()
-        profile_vec = encoder.encode([ctx])[0]
+        profile_vec = encode_query(ctx)
     except Exception:
         profile_vec = np.zeros(_EMBED_DIM)
         
@@ -331,3 +345,51 @@ def score_jobs(
             progress(min(start + BATCH_SIZE, total), total)
 
     return results
+
+
+def search_jobs_fts5(query_str: str, limit: int = 25) -> list[dict[str, Any]]:
+    """Native SQLite FTS5 Full-Text Search with BM25 ranking (zero external dependencies).
+
+    Provides sub-millisecond lexical keyword matching with Porter stemming directly inside
+    the local SQLite database, avoiding external binary index drift or Windows file locks.
+    """
+    import re
+    from . import db
+
+    clean_tokens = [re.sub(r'[^a-zA-Z0-9]', '', w) for w in query_str.split()]
+    clean_tokens = [w for w in clean_tokens if w]
+    if not clean_tokens:
+        return []
+
+    fts_match = " OR ".join(clean_tokens)
+    with db.get_cursor() as cur:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs_fts'")
+        if not cur.fetchone():
+            cur.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
+                    job_id UNINDEXED,
+                    title,
+                    company,
+                    description,
+                    tokenize=porter
+                )
+            """)
+
+        cur.execute("""
+            INSERT OR IGNORE INTO jobs_fts(job_id, title, company, description)
+            SELECT id, title, company, description FROM jobs
+            WHERE id NOT IN (SELECT job_id FROM jobs_fts)
+        """)
+
+        try:
+            cur.execute("""
+                SELECT job_id, bm25(jobs_fts) as rank
+                FROM jobs_fts
+                WHERE jobs_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            """, (fts_match, limit))
+            return [{"job_id": row["job_id"], "bm25_score": -float(row["rank"])} for row in cur.fetchall()]
+        except Exception:
+            return []
+

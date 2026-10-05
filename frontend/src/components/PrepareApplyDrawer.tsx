@@ -1,7 +1,17 @@
-import React, { useState } from 'react';
-import { X, ShieldAlert, CheckCircle2, Send, ExternalLink, ShieldCheck, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, ShieldAlert, CheckCircle2, Send, ExternalLink, ShieldCheck, Download, Camera, FileJson } from 'lucide-react';
 import type { JobViewV2, RunViewV2 } from '../api/v2Client';
 import toast from 'react-hot-toast';
+
+interface PreviewItem {
+  file: string;
+  generated_at?: string;
+  apply_url?: string;
+  job_title?: string;
+  job_company?: string;
+  fields_filled_count?: number;
+  has_screenshot?: boolean;
+}
 
 interface PrepareApplyDrawerProps {
   job: JobViewV2 | null;
@@ -12,6 +22,17 @@ interface PrepareApplyDrawerProps {
 export default function PrepareApplyDrawer({ job, run, onClose }: PrepareApplyDrawerProps) {
   const [userConfirmed, setUserConfirmed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [previews, setPreviews] = useState<PreviewItem[] | null>(null);
+
+  // Review-first evidence: post-fill verification packs from earlier sessions.
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/v2/apply-previews?limit=5')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => { if (alive) setPreviews(Array.isArray(d) ? d : []); })
+      .catch(() => { if (alive) setPreviews([]); });
+    return () => { alive = false; };
+  }, []);
 
   if (!job) return null;
 
@@ -128,6 +149,59 @@ export default function PrepareApplyDrawer({ job, run, onClose }: PrepareApplyDr
                 </a>
               </div>
             </div>
+          </div>
+
+          {/* Post-Fill Verification Packs (review-first evidence) */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-2">
+              <Camera size={13} className="text-sky-400" />
+              Recent Fill Verification Packs
+            </h3>
+            {previews === null ? (
+              <div className="text-xs text-zinc-500">Loading verification history…</div>
+            ) : previews.length === 0 ? (
+              <div className="p-3 rounded-xl bg-white/[0.015] border border-white/[0.05] text-xs text-zinc-500">
+                No fill reports yet. When the assisted browser pre-fills an application, a full-page
+                screenshot + field-by-field log is saved here so you can verify exactly what was entered.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {previews.map((p) => (
+                  <div key={p.file} className="p-3 rounded-xl bg-white/[0.015] border border-white/[0.05] flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-zinc-200 truncate">
+                        {p.job_company || 'Unknown company'} {p.job_title ? `— ${p.job_title}` : ''}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                        {p.generated_at} · {p.fields_filled_count ?? 0} fields filled
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {p.has_screenshot && (
+                        <a
+                          href={`/apply-previews-files/${p.file}.png`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open full-page screenshot"
+                          className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-400 hover:text-white transition-colors"
+                        >
+                          <Camera size={13} />
+                        </a>
+                      )}
+                      <a
+                        href={`/api/v2/apply-previews/${p.file}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open field-by-field JSON log"
+                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-400 hover:text-white transition-colors"
+                      >
+                        <FileJson size={13} />
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* User Sign-Off Checkbox */}

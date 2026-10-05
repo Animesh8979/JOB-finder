@@ -56,36 +56,143 @@ def _save_json(path: Path, data: Any) -> None:
 
 
 # --- Secrets (API keys) ------------------------------------------------------
-def _get_fernet() -> Fernet | None:
+def _get_fernet(create_if_missing: bool = True) -> Fernet | None:
+    """Return the vault cipher. Never regenerates a key when one already exists
+    (per Fernet docs, losing the original key makes existing ciphertext
+    permanently undecryptable — silently replacing it would destroy the vault).
+    Returns None when no key exists and create_if_missing is False, or when the
+    key file is unreadable/corrupt."""
     try:
         if not FERNET_KEY_PATH.exists():
+            if not create_if_missing:
+                return None
             key = Fernet.generate_key()
             FERNET_KEY_PATH.write_bytes(key)
+            return Fernet(key)
         return Fernet(FERNET_KEY_PATH.read_bytes())
     except Exception:
         return None
 
+def _load_secrets() -> dict[str, str]:
+    """Read the vault strictly: damaged data must never look like an empty vault."""
+    try:
+        raw = SECRETS_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError):
+        raise ValueError("Cannot read secrets vault; restore it before retrying.") from None
+    try:
+        secrets = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid secrets vault JSON; restore it before retrying.") from None
+    if not isinstance(secrets, dict) or any(
+        not isinstance(value, str) for value in secrets.values()
+    ):
+        raise ValueError("Invalid secrets vault structure; expected an object of strings.")
+    return secrets
+
+
 def get_secret(key: str, env_var: str | None = None) -> str:
-    """Return a secret from data/secrets.json, falling back to an env var."""
-    secrets = _load_json(SECRETS_PATH, {})
+    """Return a secret from data/secrets.json, falling back to an env var.
+
+    Fail-closed: a value stored in the vault that cannot be decrypted is treated
+    as corrupt ciphertext and raises, instead of being returned as if it were a
+    usable key (silently sending ciphertext to an API provider).
+    """
+    secrets = _load_secrets()
     val = str(secrets.get(key, "") or "").strip()
     if val:
-        f = _get_fernet()
+        f = _get_fernet(create_if_missing=False)
         if f:
             try:
                 return f.decrypt(val.encode("utf-8")).decode("utf-8")
-            except Exception:
-                pass # Fallback if decryption fails
-        return val
+            except Exception as e:
+                raise ValueError(
+                    f"Secret '{key}' in data/secrets.json could not be decrypted "
+                    f"(vault key mismatch or corrupt entry). Re-enter it on the "
+                    f"Setup page to re-encrypt it. Original error: {e}"
+                ) from e
+        # No Fernet key available at all: do not return raw vault contents.
+        raise ValueError(
+            f"Secret '{key}' is present in data/secrets.json but the encryption "
+            f"key (data/.fernet_key) is unreadable. Restore that key file or "
+            f"re-enter the secret on the Setup page."
+        )
     return (os.getenv(env_var or key.upper()) or "").strip()
 
 
+def migrate_env_secrets(env_keys: dict[str, str] | None = None) -> dict[str, str]:
+    """One-time migration: move plaintext keys from .env into the encrypted vault.
+
+    Returns the dict of key names that were migrated. Idempotent — keys already
+    in the vault are left untouched. Does NOT delete .env (the owner should
+    rotate the exposed keys, then remove the file manually).
+    """
+    default_map = {
+        "NVIDIA_API_KEY": "nvidia_api_key",
+        "NARA_API_KEY": "nara_api_key",
+        "GEMINI_API_KEY": "gemini_api_key",
+        "APIFY_API_TOKEN": "apify_api_token",
+        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "ADZUNA_APP_ID": "adzuna_app_id",
+        "ADZUNA_APP_KEY": "adzuna_app_key",
+    }
+    key_map = env_keys or default_map
+    migrated: dict[str, str] = {}
+    secrets = _load_secrets()
+    # Migration bootstraps the vault (creates the key if absent); reads must not.
+    # But when entries exist, only the ORIGINAL key can keep them readable.
+    has_entries = any(str(v or "").strip() for v in secrets.values())
+    f = _get_fernet(create_if_missing=not has_entries)
+    if f is None:
+        return migrated
+    for env_name, vault_name in key_map.items():
+        env_val = (os.getenv(env_name) or "").strip()
+        if not env_val:
+            continue
+        # Skip if a (decryptable) value already exists in the vault.
+        existing = str(secrets.get(vault_name, "") or "").strip()
+        if existing:
+            try:
+                f.decrypt(existing.encode("utf-8"))
+                continue  # already migrated
+            except Exception:
+                pass  # corrupt entry — overwrite it
+        secrets[vault_name] = f.encrypt(env_val.encode("utf-8")).decode("utf-8")
+        migrated[vault_name] = vault_name
+    if migrated:
+        _save_json(SECRETS_PATH, secrets)
+    return migrated
+
+
 def set_secrets(updates: dict[str, str]) -> None:
-    secrets = _load_json(SECRETS_PATH, {})
-    f = _get_fernet()
+    """Store secrets in data/secrets.json, encrypted with the Fernet vault key.
+
+    Fail-closed on write: if the vault key is unavailable, refuse to store the
+    value as plaintext (which would silently weaken the vault).
+    """
+    secrets = _load_secrets()
+    # If the vault already holds entries, its original key is REQUIRED: creating
+    # a fresh key here would strand every existing entry as undecryptable.
+    has_entries = any(str(v or "").strip() for v in secrets.values())
+    f = _get_fernet(create_if_missing=not has_entries)
     for k, v in updates.items():
         v = (v or "").strip()
-        if f and v:
+        if v:
+            if f is None:
+                if has_entries:
+                    # Vault already holds entries but the key is lost — refuse.
+                    raise ValueError(
+                        f"Cannot store secret '{k}': the encryption key "
+                        f"(data/.fernet_key) is missing, and the vault already "
+                        f"contains entries that need that key. Restore the key "
+                        f"file or clear data/secrets.json before retrying."
+                    )
+                raise ValueError(
+                    f"Cannot store secret '{k}': the encryption key "
+                    f"(data/.fernet_key) is unreadable. Refusing to write "
+                    f"plaintext secrets. Fix or delete data/.fernet_key and retry."
+                )
             v = f.encrypt(v.encode("utf-8")).decode("utf-8")
         secrets[k] = v
     _save_json(SECRETS_PATH, secrets)

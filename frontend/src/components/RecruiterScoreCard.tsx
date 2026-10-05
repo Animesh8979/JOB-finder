@@ -219,12 +219,20 @@ const styles = String.raw`
 }
 .dot-col-item {
   display: flex;
-  align-items: center;
-  gap: 0.25rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.category-dot-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.85rem 1.25rem;
+  flex: 1;
+  min-width: 0;
 }
 .dots {
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.25rem;
 }
 .totals-box {

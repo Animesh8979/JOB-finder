@@ -1,15 +1,14 @@
 """
-Autonomous Auto-Apply Engine leveraging Playwright over CDP to a local Edge browser.
-This allows the bot to use the user's active session, bypassing login and bot challenges.
+Autonomous Auto-Apply Engine leveraging a stealth-first browser session.
+Primary engine is Camoufox (anti-detect Firefox); falls back to Playwright Chromium
+with an isolated Edge-style profile. This allows the bot to use a persistent local
+session, bypassing login repetition and bot challenges.
 """
 import logging
 import re
 from typing import Dict, Any
 
-try:
-    from playwright.async_api import async_playwright
-except ImportError:
-    pass  # Will be caught when function is called if not installed
+from src.stealth_browser import launch_async as stealth_launch_async
 
 from src import llm, config, db
 import uuid
@@ -105,7 +104,7 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
     
     try:
         import html2text
-        from contextlib import asynccontextmanager
+        from contextlib import AsyncExitStack
 
         bot_profile_dir = config.DATA_DIR / "bot_profile"
         bot_profile_dir.mkdir(parents=True, exist_ok=True)
@@ -119,27 +118,13 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
                     file_path.unlink()
                 except OSError:
                     pass
-                    
-        @asynccontextmanager
-        async def managed_playwright():
-            p = await async_playwright().start()
-            try:
-                yield p
-            finally:
-                await p.stop()
 
-        async with managed_playwright() as p:
-            try:
-                # Launch isolated persistent context
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir=str(bot_profile_dir),
-                    channel="msedge",
-                    headless=True,  # Run headlessly in the background
-                    args=["--disable-blink-features=AutomationControlled", "--no-first-run"]
-                )
-            except Exception as e:
-                logger.error(f"Failed to launch persistent context: {e}")
-                return {"status": "error", "message": f"Failed to launch isolated bot profile. Ensure it is not currently open. Error: {e}"}
+        # Stealth-first engine (Camoufox when installed; Chromium fallback).
+        # stealth_browser keeps a separate "-camoufox" profile dir internally.
+        async with AsyncExitStack() as stack:
+            context = await stack.enter_async_context(
+                stealth_launch_async(user_data_dir=bot_profile_dir, headless=True)
+            )
 
             try:
                 page = context.pages[0] if context.pages else await context.new_page()
@@ -259,8 +244,10 @@ async def connect_and_apply(job_url: str, profile_text: str) -> Dict[str, Any]:
                     "message": "Auto-apply sequence completed via LLM execution loop.",
                     "snapshot_length": len(minified_markdown)
                 }
-            finally:
-                await context.close()
+            except Exception:
+                # Teardown is owned by AsyncExitStack (single close, both engines).
+                logger.exception("Auto-apply execution loop failed")
+                raise
                 
     except Exception as e:
         logger.error(f"Playwright error during auto-apply: {e}")

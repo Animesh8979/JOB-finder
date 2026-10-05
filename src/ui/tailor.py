@@ -128,17 +128,31 @@ def render() -> None:
 
     # ---- Cover letter ----
     with tab_cover:
-        c1, c2 = st.columns([1, 2])
-        tone = c1.selectbox("Tone", ["Professional", "Warm", "Enthusiastic", "Concise"])
-        extra = c2.text_input("Anything specific to mention? (optional)",
+        c1, c2, c3 = st.columns([1, 1, 2])
+        angle_choice = c1.selectbox("Strategic Angle", [
+            "Vision (Company Mission & Trajectory)",
+            "Problem-Solver (JD Technical Bottlenecks)",
+            "Methodology (Engineering Rigor & CI/CD)",
+            "Direct / Executive (Metric-Dense & Concise)"
+        ])
+        angle_key_map = {
+            "Vision (Company Mission & Trajectory)": "vision",
+            "Problem-Solver (JD Technical Bottlenecks)": "problem_solver",
+            "Methodology (Engineering Rigor & CI/CD)": "methodology",
+            "Direct / Executive (Metric-Dense & Concise)": "direct_executive"
+        }
+        tone = c2.selectbox("Tone", ["Professional", "Warm", "Enthusiastic", "Concise"])
+        extra = c3.text_input("Anything specific to mention? (optional)",
                               placeholder="e.g. I'm relocating, available immediately, referral from…")
-        if st.button("✨ Generate cover letter", type="primary"):
+        if st.button("✨ Generate Strategic Cover Letter", type="primary"):
             try:
-                with st.spinner("Writing your cover letter…"):
-                    letter = tailor.cover_letter(job, profile, prefs, tone=tone, extra_notes=extra)
+                with st.spinner("Writing your strategic cover letter…"):
+                    letter = tailor.generate_strategic_cover_letter(
+                        job, profile, prefs, angle_key=angle_key_map[angle_choice], tone=tone, extra_notes=extra
+                    )
                 db.update_application(job_id, cover_letter_text=letter, status="Tailored")
                 st.session_state[f"cover_{job_id}"] = letter
-                st.success("Draft ready — edit it below if you like.")
+                st.success(f"Strategic draft ready ({angle_choice}) — edit it below if you like.")
             except Exception as e:
                 st.error(str(e))
 
@@ -149,9 +163,16 @@ def render() -> None:
                 resume_stored = (db.get_application(job_id) or {}).get("tailored_resume_text")
                 resume = json.loads(resume_stored) if resume_stored else {"name": prefs["identity"].get("full_name", "")}
                 paths = documents.generate_documents(job, resume, edited, style_config=style_config)
+                
+                # Modern Playwright PDF rendering
+                from .. import pdf_engine
+                modern_pdf_path = config.OUTPUTS_DIR / f"modern_{job_id}_{job.get('company','').replace(' ','_')}.pdf"
+                pdf_engine.generate_modern_pdf(resume, modern_pdf_path)
+                paths["modern_pdf"] = str(modern_pdf_path)
+
                 db.update_application(job_id, cover_letter_text=edited, cover_letter_path=paths["cover_pdf"])
                 st.session_state[f"docs_{job_id}"] = paths
-                st.success("Saved and exported.")
+                st.success("Saved and exported. Includes Modern Space Grotesk / DM Sans PDF!")
                 _download_row(paths)
             except Exception as e:
                 st.error(str(e))

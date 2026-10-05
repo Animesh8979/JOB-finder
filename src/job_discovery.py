@@ -25,9 +25,16 @@ def run_jobspy_discovery(search_term: str, location: str, results_wanted: int = 
 
         proxy_url = config.get_secret("proxycurl_api_key", "PROXY_URL")
         proxy_dict = {"http": proxy_url, "https": proxy_url} if (proxy_url and proxy_url.startswith("http")) else None
-        
+
+        # LinkedIn: rate-limited ~10 pages/IP and ToS-restricted; opt-in only
+        # (researched 2026-08: speedyapply/JobSpy README — proxies "a must")
+        import os
+        sites = ["indeed", "glassdoor", "google", "zip_recruiter"]
+        if os.getenv("JOBSPY_LINKEDIN_ENABLED", "").lower() in ("1", "true", "yes"):
+            sites.insert(0, "linkedin")
+
         jobs_df: pd.DataFrame = scrape_jobs(
-            site_name=["linkedin", "indeed", "glassdoor", "google", "zip_recruiter"],
+            site_name=sites,
             search_term=search_term,
             location=location,
             results_wanted=results_wanted,

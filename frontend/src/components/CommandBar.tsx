@@ -69,6 +69,7 @@ export default function CommandBar({ onSearchStarted, onFilterChange, activeFilt
         </div>
         
         <input
+          id="command-search"
           type="text"
           value={query}
           onChange={(e) => {
