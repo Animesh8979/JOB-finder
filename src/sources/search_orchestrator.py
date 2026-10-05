@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 from .adapter_base import CancellationToken, ModuleSourceAdapter, SourceAdapter
-from . import aggregate
+from . import aggregate, base
 
 
 class CanonicalDeduplicator:
@@ -169,7 +169,7 @@ class SearchOrchestrator:
                         if err:
                             errors[sid] = err
                         else:
-                            valid_jobs = [j for j in jobs if aggregate.base.matches_filters(j, prefs)]
+                            valid_jobs = [j for j in jobs if base.matches_filters(j, prefs)]
                             collected_jobs.extend(valid_jobs)
                         if on_source_complete:
                             on_source_complete(sid, len(jobs), err, duration_ms)

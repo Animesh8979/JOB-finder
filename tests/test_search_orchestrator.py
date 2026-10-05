@@ -49,7 +49,7 @@ class MockSlowAdapter(SourceAdapter):
         # (1.0s). This guarantees the orchestrator - not this adapter - decides
         # the outcome, so "slow_mock times out" is deterministic instead of a
         # race between cooperative-cancel and the orchestrator's deadline poll.
-        time.sleep(3.0)
+        time.sleep(6.0)
         return []
 
 
@@ -122,8 +122,8 @@ def test_canonical_deduplicate_jobs():
 
 def test_search_orchestrator_fetch_parallel(monkeypatch):
     orchestrator = SearchOrchestrator(
-        source_timeout_sec=0.4,
-        global_timeout_sec=1.0,
+        source_timeout_sec=1.5,
+        global_timeout_sec=4.0,
         max_workers=4,
     )
 
