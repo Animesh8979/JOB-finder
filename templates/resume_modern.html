@@ -239,7 +239,7 @@
     {% for edu in resume.education %}
     <div class="edu-item">
       <div>
-        <span class="edu-degree">{{ edu.degree | default(edu) }}{% if edu.field %} in {{ edu.field }}{% endif %}</span> — 
+        <span class="edu-degree">{{ edu.degree | default(edu) }}{% if edu.field %} in {{ edu.field }}{% endif %}</span>, 
         <span class="edu-school">{{ edu.school | default("") }}</span>
       </div>
       <div class="edu-year">{{ edu.year | default("") }}</div>

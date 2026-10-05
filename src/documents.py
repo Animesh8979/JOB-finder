@@ -13,6 +13,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 
 from . import config
+from .anti_slop import audit_and_sanitize, sanitize_bullet
 
 # --- filenames ---------------------------------------------------------------
 def slugify(text: str, maxlen: int = 50) -> str:
@@ -119,46 +120,51 @@ def save_resume_docx(resume: dict[str, Any], path: Path, style_config: dict[str,
     if resume.get("summary"):
         _heading(doc, "Summary", font_name, accent_rgb, template)
         p_sum = doc.add_paragraph()
-        run_sum = p_sum.add_run(resume["summary"])
+        run_sum = p_sum.add_run(audit_and_sanitize(resume["summary"]).cleaned_text)
         run_sum.font.name = font_name
 
     if resume.get("skills"):
         _heading(doc, "Skills", font_name, accent_rgb, template)
         p_sk = doc.add_paragraph()
-        run_sk = p_sk.add_run(", ".join(map(str, resume["skills"])))
+        clean_skills = [audit_and_sanitize(str(s)).cleaned_text for s in resume["skills"] if s]
+        run_sk = p_sk.add_run(", ".join(clean_skills))
         run_sk.font.name = font_name
 
     if resume.get("experience"):
         _heading(doc, "Experience", font_name, accent_rgb, template)
         for job in resume["experience"]:
             line = doc.add_paragraph()
-            run_t = line.add_run(str(job.get("title", "")).strip())
+            title_clean = audit_and_sanitize(str(job.get("title", "")).strip()).cleaned_text
+            run_t = line.add_run(title_clean)
             run_t.bold = True
             run_t.font.name = font_name
             if job.get("company"):
-                run_comp = line.add_run(f" — {job['company']}")
+                comp_clean = audit_and_sanitize(str(job["company"])).cleaned_text
+                run_comp = line.add_run(f", {comp_clean}")
                 run_comp.font.name = font_name
             meta = "  |  ".join(b for b in (job.get("location", ""), job.get("dates", "")) if b)
             if meta:
                 m = doc.add_paragraph()
-                mr = m.add_run(meta)
+                mr = m.add_run(audit_and_sanitize(meta).cleaned_text)
                 mr.italic = True
                 mr.font.size = Pt(9)
                 mr.font.name = font_name
             for bullet in (job.get("bullets") or []):
                 p_b = doc.add_paragraph(style="List Bullet")
-                run_b = p_b.add_run(str(bullet))
+                run_b = p_b.add_run(sanitize_bullet(str(bullet)))
                 run_b.font.name = font_name
 
     if resume.get("projects"):
         _heading(doc, "Projects", font_name, accent_rgb, template)
         for pr in resume["projects"]:
             pp = doc.add_paragraph()
-            run_pn = pp.add_run(str(pr.get("name", "")))
+            pname_clean = audit_and_sanitize(str(pr.get("name", ""))).cleaned_text
+            run_pn = pp.add_run(pname_clean)
             run_pn.bold = True
             run_pn.font.name = font_name
             if pr.get("line"):
-                run_pl = pp.add_run(f" — {pr['line']}")
+                line_clean = sanitize_bullet(str(pr["line"]))
+                run_pl = pp.add_run(f": {line_clean}")
                 run_pl.font.name = font_name
 
     if resume.get("education"):
@@ -182,6 +188,7 @@ def save_cover_letter_docx(text: str, path: Path, name: str = "", contact: str =
     font_name = style.get("font", "Calibri")
     margin_mm = style.get("margin", 18)
     
+    clean_text = audit_and_sanitize(text or "").cleaned_text
     doc = _base_doc(font_name, margin_mm)
     if name:
         h = doc.add_paragraph()
@@ -195,7 +202,7 @@ def save_cover_letter_docx(text: str, path: Path, name: str = "", contact: str =
         run_c.font.size = Pt(9.5)
         run_c.font.name = font_name
     doc.add_paragraph("")
-    for para in re.split(r"\n\s*\n", (text or "").strip()):
+    for para in re.split(r"\n\s*\n", clean_text.strip()):
         p_p = doc.add_paragraph()
         run_p = p_p.add_run(para.strip())
         run_p.font.name = font_name
@@ -216,6 +223,8 @@ def _latin1(s: str) -> str:
 def save_text_pdf(body: str, path: Path, title: str = "", contact: str = "", style_config: dict[str, Any] | None = None) -> None:
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
+
+    body = audit_and_sanitize(body or "").cleaned_text
 
     style = style_config or {}
     font_name = style.get("font", "Calibri")

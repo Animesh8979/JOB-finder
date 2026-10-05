@@ -18,6 +18,7 @@ from typing import Any
 from . import llm, config
 from .recruiter_score import score as hackerrank_score
 from .fabrication_shield import verify_resume_claims
+from .anti_slop import audit_and_sanitize, sanitize_bullet
 from .github_evidence_ledger import build_github_evidence_ledger
 from .multi_ats_pipeline import simulate_enterprise_ats_parsers, stage_instant_auto_apply
 
@@ -138,17 +139,22 @@ def audit_and_autofix_resume(profile: dict[str, Any], prefs: dict[str, Any] | No
         f"CANDIDATE EXISTING PROFILE:\n{json.dumps(profile, indent=2)}\n\n"
         f"DIAGNOSTIC WEAKNESSES FOUND:\n{json.dumps(diagnostics, indent=2)}\n\n"
         "UPGRADE INSTRUCTIONS:\n"
-        "1. Rewrite every bullet point under 'experience' to start with a strong action verb (e.g., Architected, Engineered, Automated, Spearheaded, Optimized).\n"
+        "1. Rewrite every bullet point under 'experience' to start with a strong action verb (e.g., Architected, Engineered, Automated, Built, Scaled, Optimized).\n"
         "2. Ensure bullet structure follows: [Strong Action Verb] + [Exact Technical Implementation] + [Real Verified Impact/Result].\n"
         "3. CRITICAL ZERO-HALLUCINATION RULE: Do NOT invent percentages, dollar values, fake employers, or fake degrees. Use ONLY facts supported by the existing profile text.\n"
-        "4. Organize and deduplicate the 'skills' list into clean ATS keywords.\n"
-        "5. Return JSON matching the exact structure: {name, headline, summary, skills, experience, education, projects, certifications, links}."
+        "4. CRITICAL ANTI-AI-SLOP RULES: Never use em-dashes (—), never use cliché buzzwords like delve/tapestry/spearheaded/fostered/robust/seamless, vary sentence lengths drastically, write with concrete engineering verbs and numbers only.\n"
+        "5. Organize and deduplicate the 'skills' list into clean ATS keywords.\n"
+        "6. Return JSON matching the exact structure: {name, headline, summary, skills, experience, education, projects, certifications, links}."
     )
 
     try:
         upgraded_raw = llm.generate_json(
             prompt,
-            system="You are an elite ATS resume architect. Return strictly valid JSON.",
+            system=(
+                "You are an elite ATS resume architect. "
+                "Never use em-dashes (—) or cliché AI buzzwords (delve, tapestry, spearheaded, fostered). "
+                "Return strictly valid JSON."
+            ),
             model=prefs.get("writing_model"),
             max_tokens=3000,
         )
@@ -159,6 +165,18 @@ def audit_and_autofix_resume(profile: dict[str, Any], prefs: dict[str, Any] | No
 
     # 4. Enforce Claim Audit Shield
     fixed_profile = verify_resume_claims(upgraded_raw, profile, prefs)
+
+    # Enforce Anti-AI-Slop & Humanizer Filter
+    if "headline" in fixed_profile and fixed_profile["headline"]:
+        fixed_profile["headline"] = audit_and_sanitize(str(fixed_profile["headline"])).cleaned_text
+    if "summary" in fixed_profile and fixed_profile["summary"]:
+        fixed_profile["summary"] = audit_and_sanitize(str(fixed_profile["summary"])).cleaned_text
+    for exp in fixed_profile.get("experience", []):
+        if isinstance(exp, dict) and "bullets" in exp and isinstance(exp["bullets"], list):
+            exp["bullets"] = [sanitize_bullet(b) for b in exp["bullets"] if b]
+    for proj in fixed_profile.get("projects", []):
+        if isinstance(proj, dict) and "bullets" in proj and isinstance(proj["bullets"], list):
+            proj["bullets"] = [sanitize_bullet(b) for b in proj["bullets"] if b]
 
     # Preserve essential raw_text and ID fields
     fixed_profile["raw_text"] = profile.get("raw_text", "")

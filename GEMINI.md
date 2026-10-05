@@ -27,6 +27,13 @@
    - Persist patterns across all operations (tools, code generation, router configurations, and test gates).
 
 5. **Mandatory Autonomous Skill-Driven Execution (Sequential FSM Protocol):**
+   - **Zero-Text-First Tool Invariant (Gemini Decoder Hardware Interrupt)**:
+     - On any non-trivial engineering task, the agent's FIRST API step MUST be a tool call (`view_file`, `run_command`). Emitting natural language conversational padding before executing tools is strictly prohibited.
+   - **Physical Execution Receipts (Absolute Ban on "Header Theater")**:
+     - Emitting `[SKILL ACTIVE: <skill>]` without a physical execution receipt in the turn's tool history is classified as a hallucination.
+     - Claiming `deep-thinking-inventor` requires running `inventive_engine.py` or executing an AST audit.
+     - Claiming `agent-computer-use` requires capturing windows or inspecting SoM marks.
+     - Claiming `verification-before-completion` requires running verification tests with exit code 0.
    - **Phase 0 — Preflight Skill Binding (Mandatory Turn Prerequisite)**:
      - Every substantive operation MUST begin with explicit active skill attribution headers with clickable links:
        `[SKILL ACTIVE: ponytail] (file:///D:/skills-library/ponytail/SKILL.md)`
@@ -42,6 +49,7 @@
      - Deep discovery across the library routes via `resolve_skill.py`.
    - **Zero MCP Tools**: Strictly zero MCP usage. All actions route through local Python stdlib or PowerShell.
    - **Autonomous Skill Synthesis**: If no skill matches the domain, synthesize one via `D:\AgentBrains\tools\forge-skill.ps1` before proceeding.
+
 
 6. **The Ponytail Protocol (YAGNI & Minimalist Senior Dev Philosophy):**
    - Active on EVERY coding task. Channels the laziest, most effective senior developer in the room.

@@ -191,6 +191,28 @@ Core principle: **review-first** — AI prepares, human clicks submit/send.
     - Updated `tests/test_e2e_swat_dryrun.py` to ensure preferences default to `auto` provider and `nemotron-3-super-120b-a12b` under pytest conftest isolation.
   - [VERIFIED] **Results**: Full E2E dry-run passed with Exit Code 0 in 126.34s; full repository regression suite across all 22 test files passed with **143/143 tests passed (100% green, 0 failures, 0 regressions, 0 warnings) in 103.86s**.
 
+- **2026-10-06 (SWAT Red-Team Lead 1 — Linguistic Slop Forensic Auditor, COMPLETE & 100% GREEN)**:
+  - [VERIFIED] **Engine Upgrade (`src/anti_slop.py`)**:
+    - Expanded `BANNED_AI_TERMS` to track all 35 mandated modern LLM hallmarks: `delve`, `testament`, `tapestry`, `beacon`, `harnessing`, `pivotal`, `fostered`, `realm`, `dynamic landscape`, `spearheaded synergy`, `leverage`, `robust`, `revolutionize`, `plethora`, `nestled`, `unlock`, `seamlessly`, `furthermore`, `moreover`, `in summary`, `in conclusion`, `game-changer`, `paradigm shift`, `holistic approach`, `cutting-edge`, `state-of-the-art`, `ever-evolving`, `vital role`, `crucial`, `meticulous`, `commendable`, `unwavering`, `transformative`, `journey`, `rich tapestry`.
+    - Implemented aggressive punctuation sanitization in `sanitize_punctuation()`: strips em-dashes (`—`, `\u2014`), en-dashes (`–`, `\u2013`), parenthetical double-hyphens (`--`), curly single/double quotes (`“`, `”`, `‘`, `’`), and ellipsis (`…`, `\u2026`, `...`), converting to crisp natural punctuation (commas, periods, colons, or straight quotes).
+    - Preserved capitalization during replacements via `_replace_preserve_case()`.
+    - Exported `__all__ = ["BANNED_AI_TERMS", "AI_SLOP_REPLACEMENTS", "SlopAuditReport", "sanitize_punctuation", "calculate_burstiness", "audit_and_sanitize", "sanitize_bullet"]`.
+  - [VERIFIED] **Strict Negative Prompt Constraints & Pipeline Sanitization**:
+    - `src/tailor.py`: Added negative constraints to `NO_FABRICATION`, `tailor_resume`, `cover_letter`, `suggest_bullet_improvements`, and `generate_strategic_cover_letter`. Enforced post-generation sanitization across headlines, summaries, bullet points, and project/education fields.
+    - `src/cv_builder.py`: Wired `audit_and_sanitize`, `sanitize_bullet`, and `sanitize_punctuation` into `build_rendercv_yaml()`, `build_typst_resume()`, and `render_typst_direct()`.
+    - `src/persona_outreach.py`: Added anti-slop prompt directives and post-generation sanitization to LinkedIn connection notes (≤300 chars) and email applications.
+    - `src/mock_interviewer.py`: Added anti-slop rules to prompt and system prompt; sanitized questions and rationales prior to TTS generation.
+    - `src/story_bank.py`: Added anti-slop constraints and post-generation sanitization to STAR+R behavioral stories, reverse-interview questions, and debrief notes.
+    - `src/trojan_horse.py`: Added anti-slop prompt constraints and ensured pitches/memos are cleaned.
+    - `src/documents.py`: Eliminated hardcoded em-dashes and added pre-render sanitization in `save_resume_docx`, `save_cover_letter_docx`, and `save_text_pdf`.
+    - `src/autonomous_resume_agent.py`: Upgraded prompt action verbs and added post-fix anti-slop filtering.
+    - `templates/resume_modern.html`: Replaced hardcoded em-dash on line 242 with natural comma.
+  - [VERIFIED] **Verification Evidence**:
+    - `tests/test_anti_slop.py`: 8/8 passed in 2.95s.
+    - `tests/test_red_team_anti_slop.py`: 5/5 passed in 5.22s across 20+ brutal adversarial attack paragraphs.
+    - `tests/test_e2e_swat_dryrun.py`: 1/1 passed with exit code 0 (Stage E anti-slop invariant verified).
+    - `tests/test_career_warfare_v2.py`: 17/17 passed in 27.50s.
+
 
 
 

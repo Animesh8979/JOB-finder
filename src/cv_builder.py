@@ -8,13 +8,14 @@ from __future__ import annotations
 import os
 import sys
 import yaml
+import re
 import subprocess
 import shutil
 from pathlib import Path
 from typing import Any
 
 from . import config
-from .anti_slop import audit_and_sanitize, sanitize_bullet
+from .anti_slop import audit_and_sanitize, sanitize_bullet, sanitize_punctuation
 
 def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str = "sb2nov") -> None:
     """Transform our standard profile dictionary into RenderCV YAML schema."""
@@ -67,11 +68,11 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
         exp_list = []
         for exp in profile["experience"]:
             item = {
-                "company": exp.get("company") or "Company",
-                "position": exp.get("title") or "Position",
+                "company": audit_and_sanitize(exp.get("company") or "Company").cleaned_text,
+                "position": audit_and_sanitize(exp.get("title") or "Position").cleaned_text,
             }
             if exp.get("location"):
-                item["location"] = exp["location"]
+                item["location"] = audit_and_sanitize(exp["location"]).cleaned_text
             
             # Date handling
             if exp.get("dates"):
@@ -95,8 +96,8 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
         for ed in profile["education"]:
             if isinstance(ed, dict):
                 item = {
-                    "institution": ed.get("institution") or ed.get("school") or "Institution",
-                    "area": ed.get("degree") or ed.get("field") or "Degree",
+                    "institution": audit_and_sanitize(ed.get("institution") or ed.get("school") or "Institution").cleaned_text,
+                    "area": audit_and_sanitize(ed.get("degree") or ed.get("field") or "Degree").cleaned_text,
                 }
                 if ed.get("dates"):
                     item["date"] = str(ed["dates"])
@@ -105,11 +106,14 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
                 
                 # Check for details (like GPA)
                 if ed.get("details"):
-                    item["highlights"] = ed["details"]
+                    if isinstance(ed["details"], list):
+                        item["highlights"] = [sanitize_bullet(h) for h in ed["details"] if h]
+                    else:
+                        item["highlights"] = [sanitize_bullet(str(ed["details"]))]
                     
                 edu_list.append(item)
             else:
-                edu_list.append(str(ed))
+                edu_list.append(audit_and_sanitize(str(ed)).cleaned_text)
         sections["education"] = edu_list
         
     # Projects
@@ -117,11 +121,11 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
         proj_list = []
         for pr in profile["projects"]:
             item = {
-                "name": pr.get("name") or "Project",
+                "name": audit_and_sanitize(pr.get("name") or "Project").cleaned_text,
             }
             # Add role/position if available (some themes support it)
             if pr.get("role"):
-                item["position"] = pr["role"]
+                item["position"] = audit_and_sanitize(pr["role"]).cleaned_text
             
             # Bullets handling
             bullets = pr.get("details") or pr.get("bullets")
@@ -129,29 +133,31 @@ def build_rendercv_yaml(profile: dict[str, Any], output_path: Path, theme: str =
                 item["highlights"] = [sanitize_bullet(b) for b in bullets if b]
             elif pr.get("line"):
                 item["highlights"] = [sanitize_bullet(pr["line"])]
+            elif pr.get("description"):
+                item["highlights"] = [sanitize_bullet(pr["description"])]
                 
             proj_list.append(item)
         sections["projects"] = proj_list
 
     # Skills (RenderCV accepts skills as a list of dicts)
     if profile.get("skills"):
-        skills = profile["skills"]
+        clean_skills = [audit_and_sanitize(str(s)).cleaned_text for s in profile["skills"] if s]
         # Split skills into logical chunks so it looks better
-        if len(skills) > 12:
-            third = len(skills) // 3
+        if len(clean_skills) > 12:
+            third = len(clean_skills) // 3
             sections["skills"] = [
-                {"label": "Languages & Core", "details": ", ".join(skills[:third])},
-                {"label": "Frameworks & Tools", "details": ", ".join(skills[third:2*third])},
-                {"label": "Concepts & Cloud", "details": ", ".join(skills[2*third:])}
+                {"label": "Languages & Core", "details": ", ".join(clean_skills[:third])},
+                {"label": "Frameworks & Tools", "details": ", ".join(clean_skills[third:2*third])},
+                {"label": "Concepts & Cloud", "details": ", ".join(clean_skills[2*third:])}
             ]
         else:
             sections["skills"] = [
-                {"label": "Technical Skills", "details": ", ".join(skills)}
+                {"label": "Technical Skills", "details": ", ".join(clean_skills)}
             ]
 
     # Certifications & Languages
     if profile.get("certifications"):
-        sections["certifications"] = profile["certifications"]
+        sections["certifications"] = [audit_and_sanitize(str(c)).cleaned_text for c in profile["certifications"] if c]
         
     cv_data["sections"] = sections
     
@@ -240,8 +246,8 @@ def render_typst_direct(typst_source: str, output_pdf_path: str | Path) -> str |
     out_p = Path(output_pdf_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
 
-    # Sanitize em-dashes and artificial punctuation from Typst source
-    clean_source = typst_source.replace("—", ", ").replace(" -- ", ", ")
+    # Sanitize em-dashes, en-dashes, curly quotes, ellipsis, and artificial punctuation
+    clean_source, _, _ = sanitize_punctuation(typst_source)
     import re
     # Escape @ (prevents invalid label reference) and $ (prevents math mode crash) in raw text
     clean_source = re.sub(r'(?<!\\)@', r'\\@', clean_source)
@@ -272,7 +278,7 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
     Guarantees 0 em-dashes, clear typographic hierarchy, and dense ATS-friendly text flow.
     """
     name = (profile.get("name") or "Applicant").strip()
-    headline = (profile.get("headline") or "").strip()
+    headline = audit_and_sanitize(profile.get("headline") or "").cleaned_text
     email = (profile.get("email") or "").strip()
     phone = (profile.get("phone") or "").strip()
     location = (profile.get("location") or "").strip()
@@ -325,7 +331,7 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
     # Skills
     skills = profile.get("skills") or []
     if skills:
-        skills_str = ", ".join(skills).replace('"', '\\"')
+        skills_str = ", ".join(audit_and_sanitize(s).cleaned_text for s in skills if s).replace('"', '\\"')
         lines.extend([
             '== Core Technical Skills',
             f'#text(weight: "bold")[Technical Proficiencies:] {skills_str}',
@@ -337,9 +343,9 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
     if experience:
         lines.append('== Professional Experience')
         for exp in experience:
-            title = exp.get("title") or exp.get("position") or "Role"
-            company = exp.get("company") or "Company"
-            loc = exp.get("location") or ""
+            title = audit_and_sanitize(exp.get("title") or exp.get("position") or "Role").cleaned_text
+            company = audit_and_sanitize(exp.get("company") or "Company").cleaned_text
+            loc = audit_and_sanitize(exp.get("location") or "").cleaned_text
             dates = exp.get("dates") or (f"{exp.get('start','')} - {exp.get('end','')}".strip(" - ")) or "Present"
             
             header_right = f"{loc} | {dates}" if loc else dates
@@ -358,7 +364,7 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
     if projects:
         lines.append('== Technical Projects')
         for pr in projects:
-            pname = pr.get("name") or "Project"
+            pname = audit_and_sanitize(pr.get("name") or "Project").cleaned_text
             tech = pr.get("tech") or []
             tech_str = f" [{', '.join(tech)}]" if tech else ""
             lines.append(f'*#text(weight: "bold")[{pname}]*{tech_str}')
@@ -382,12 +388,12 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
         lines.append('== Education')
         for ed in education:
             if isinstance(ed, dict):
-                degree = ed.get("degree") or ed.get("field") or "Degree"
-                inst = ed.get("institution") or ed.get("school") or "University"
+                degree = audit_and_sanitize(ed.get("degree") or ed.get("field") or "Degree").cleaned_text
+                inst = audit_and_sanitize(ed.get("institution") or ed.get("school") or "University").cleaned_text
                 yr = ed.get("year") or ed.get("dates") or ""
                 lines.append(f'*{degree}* - {inst} #h(1fr) #text(style: "italic")[{yr}]')
             else:
-                lines.append(f'- {str(ed)}')
+                lines.append(f'- {audit_and_sanitize(str(ed)).cleaned_text}')
         lines.append('#v(2pt)')
 
     # Certifications
@@ -395,9 +401,13 @@ def build_typst_resume(profile: dict[str, Any]) -> str:
     if certs:
         lines.append('== Certifications')
         for c in certs:
-            lines.append(f'- {c}')
+            lines.append(f'- {audit_and_sanitize(str(c)).cleaned_text}')
 
-    return "\n".join(lines)
+    raw_source = "\n".join(lines)
+    clean_source = raw_source.replace("—", ", ").replace(" -- ", ", ")
+    clean_source = re.sub(r'(?<!\\)@', r'\\@', clean_source)
+    clean_source = re.sub(r'(?<!\\)\$', r'\\$', clean_source)
+    return clean_source
 
 
 def generate_typst_cv(profile: dict[str, Any], output_pdf_path: str | Path) -> str | None:

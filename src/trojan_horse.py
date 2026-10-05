@@ -115,6 +115,10 @@ class TrojanHorseEngine:
                     f"Company: {problem.company}\nRepo: {problem.target_repo}\nIssue: {problem.issue_title}\n"
                     f"Issue Description: {problem.issue_description}\n"
                     f"Candidate Name: {candidate_name}\nCandidate Skills: {', '.join(str(s) for s in candidate_skills)}\n\n"
+                    "CRITICAL ANTI-AI-SLOP RULES:\n"
+                    "- Never use em-dashes (—) or double hyphens (--).\n"
+                    "- Never use cliché buzzwords like delve/tapestry/spearheaded/fostered/robust/pivotal/leverage.\n"
+                    "- Write concrete engineering descriptions and benchmarks only.\n\n"
                     f"Return a JSON object with keys:\n"
                     f"- reproduction_code: minimal executable reproduction script\n"
                     f"- patch_code: clean production patch code fixing the root cause\n"
@@ -124,7 +128,10 @@ class TrojanHorseEngine:
                 )
                 res = llm.generate_json(
                     prompt,
-                    system="You are a Principal Software Architect crafting Proof-of-Value technical deliverables. Return ONLY valid JSON.",
+                    system=(
+                        "You are a Principal Software Architect crafting Proof-of-Value technical deliverables. "
+                        "Never use em-dashes (—) or AI clichés. Return ONLY valid JSON."
+                    ),
                     temperature=0.2,
                     max_tokens=900
                 )

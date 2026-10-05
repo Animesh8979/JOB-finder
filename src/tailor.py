@@ -19,10 +19,10 @@ NO_FABRICATION = (
     "- You MAY NOT invent employers, job titles, dates, degrees, certifications, tools,\n"
     "  metrics, or achievements that are not in the source. No exaggeration.\n"
     "- Keep everything truthful and ATS-friendly (plain text, standard sections, no tables).\n"
-    "- HUMAN WRITING STYLE: Never use em-dashes (—) or double hyphens (--). Use commas or hyphens (-).\n"
-    "- ZERO AI CLICHÉS: Never use words like 'delve', 'testament', 'tapestry', 'spearhead', 'leverage', "
-    "'holistic', 'foster', 'beacon', 'pivotal', 'robust', 'seamless', 'cutting-edge', 'thrilled to apply', "
-    "'I hope this letter finds you well', 'Furthermore', 'Moreover'.\n"
+    "- HUMAN WRITING STYLE: Never use em-dashes (—), never use cliché buzzwords like delve/tapestry/spearheaded/fostered, vary sentence lengths drastically, write with concrete engineering verbs and numbers only.\n"
+    "- ZERO AI CLICHÉS: Never use words like 'delve', 'testament', 'tapestry', 'spearheaded', 'spearhead', 'leverage', "
+    "'holistic', 'fostered', 'foster', 'beacon', 'pivotal', 'robust', 'seamless', 'cutting-edge', 'thrilled to apply', "
+    "'I hope this letter finds you well', 'Furthermore', 'Moreover', 'game-changer', 'revolutionize', 'transformative'.\n"
     "- NATURAL BUILDER VOICE: Use active, direct language with varied sentence rhythms."
 )
 
@@ -66,7 +66,11 @@ def tailor_resume(job: dict[str, Any], profile: dict[str, Any], prefs: dict[str,
     try:
         data = llm.generate_json(
             prompt,
-            system="You are an expert resume writer and career coach.",
+            system=(
+                "You are an expert resume writer and career coach. "
+                "Never use em-dashes (—), never use cliché buzzwords like delve/tapestry/spearheaded/fostered, "
+                "vary sentence lengths drastically, write with concrete engineering verbs and numbers only."
+            ),
             cached_context=profile_context(profile),
             model=prefs.get("writing_model"),
             max_tokens=3000,
@@ -89,14 +93,39 @@ def tailor_resume(job: dict[str, Any], profile: dict[str, Any], prefs: dict[str,
         data.setdefault(key, [])
     data.setdefault("summary", "")
     data = verify_resume_claims(data, profile, prefs)
+    if "headline" in data and isinstance(data["headline"], str):
+        data["headline"] = audit_and_sanitize(data["headline"]).cleaned_text
     if "summary" in data and isinstance(data["summary"], str):
         data["summary"] = audit_and_sanitize(data["summary"]).cleaned_text
+    if "skills" in data and isinstance(data["skills"], list):
+        data["skills"] = [audit_and_sanitize(str(s)).cleaned_text for s in data["skills"] if s]
     for exp in data.get("experience", []):
-        if isinstance(exp, dict) and "bullets" in exp and isinstance(exp["bullets"], list):
-            exp["bullets"] = [sanitize_bullet(b) for b in exp["bullets"]]
+        if isinstance(exp, dict):
+            if "title" in exp and isinstance(exp["title"], str):
+                exp["title"] = audit_and_sanitize(exp["title"]).cleaned_text
+            if "company" in exp and isinstance(exp["company"], str):
+                exp["company"] = audit_and_sanitize(exp["company"]).cleaned_text
+            if "bullets" in exp and isinstance(exp["bullets"], list):
+                exp["bullets"] = [sanitize_bullet(b) for b in exp["bullets"] if b]
     for proj in data.get("projects", []):
-        if isinstance(proj, dict) and "bullets" in proj and isinstance(proj["bullets"], list):
-            proj["bullets"] = [sanitize_bullet(b) for b in proj["bullets"]]
+        if isinstance(proj, dict):
+            if "name" in proj and isinstance(proj["name"], str):
+                proj["name"] = audit_and_sanitize(proj["name"]).cleaned_text
+            if "line" in proj and isinstance(proj["line"], str):
+                proj["line"] = sanitize_bullet(proj["line"])
+            if "description" in proj and isinstance(proj["description"], str):
+                proj["description"] = audit_and_sanitize(proj["description"]).cleaned_text
+            if "bullets" in proj and isinstance(proj["bullets"], list):
+                proj["bullets"] = [sanitize_bullet(b) for b in proj["bullets"] if b]
+    for i, edu in enumerate(data.get("education", [])):
+        if isinstance(edu, str):
+            data["education"][i] = audit_and_sanitize(edu).cleaned_text
+        elif isinstance(edu, dict):
+            for k in ("degree", "field", "institution", "school"):
+                if k in edu and isinstance(edu[k], str):
+                    edu[k] = audit_and_sanitize(edu[k]).cleaned_text
+    if "certifications" in data and isinstance(data["certifications"], list):
+        data["certifications"] = [audit_and_sanitize(str(c)).cleaned_text for c in data["certifications"] if c]
     return data
 
 
@@ -125,7 +154,11 @@ def cover_letter(
     try:
         text = llm.generate(
             prompt,
-            system="You are an expert cover-letter writer. Write authentically like a real engineer, with zero AI clichés or em dashes.",
+            system=(
+                "You are an expert cover-letter writer. Write authentically like a real engineer. "
+                "Never use em-dashes (—), never use cliché buzzwords like delve/tapestry/spearheaded/fostered, "
+                "vary sentence lengths drastically, write with concrete engineering verbs and numbers only."
+            ),
             cached_context=profile_context(profile),
             model=prefs.get("writing_model"),
             max_tokens=900,
@@ -139,7 +172,7 @@ def cover_letter(
             f"building end-to-end Python data science pipelines, KPI dashboards, and multi-agent AI systems, I am excited about "
             f"the opportunity to contribute to your data initiatives.\n\n"
             f"At Elevate Labs, I engineered regression and classification models in Python that delivered reliable, actionable "
-            f"business insights, earning the Best Performer Award. Furthermore, I built full-stack automation workflows including "
+            f"business insights, earning the Best Performer Award. I also built full-stack automation workflows including "
             f"an intelligent job matching engine and automated data analytics dashboards.\n\n"
             f"I look forward to discussing how my skills in Python, SQL, and AI workflow automation can create immediate value for your team.\n\n"
             f"Sincerely,\n{name}"
@@ -187,15 +220,22 @@ def suggest_bullet_improvements(job: dict[str, Any], profile: dict[str, Any], pr
     try:
         data = llm.generate_json(
             prompt,
-            system="You are an expert resume writer. Be truthful, clear, and action-oriented.",
+            system=(
+                "You are an expert resume writer. Be truthful, clear, and action-oriented. "
+                "Never use em-dashes (—), never use cliché buzzwords like delve/tapestry/spearheaded/fostered, "
+                "vary sentence lengths drastically, write with concrete engineering verbs and numbers only."
+            ),
             cached_context=profile_context(profile),
             model=prefs.get("writing_model"),
             max_tokens=2000
         )
         if isinstance(data, dict) and "suggestions" in data:
             for s in data["suggestions"]:
-                if isinstance(s, dict) and "suggested" in s:
-                    s["suggested"] = sanitize_bullet(s["suggested"])
+                if isinstance(s, dict):
+                    if "suggested" in s and s["suggested"]:
+                        s["suggested"] = sanitize_bullet(s["suggested"])
+                    if "explanation" in s and s["explanation"]:
+                        s["explanation"] = audit_and_sanitize(str(s["explanation"])).cleaned_text
             return data["suggestions"]
     except Exception as e:
         print(f"Error generating bullet improvements: {e}")
@@ -265,7 +305,11 @@ def generate_strategic_cover_letter(
 
     text = llm.generate(
         prompt,
-        system="You are an elite career strategist and executive copywriter.",
+        system=(
+            "You are an elite career strategist and executive copywriter. "
+            "Never use em-dashes (—), never use cliché buzzwords like delve/tapestry/spearheaded/fostered, "
+            "vary sentence lengths drastically, write with concrete engineering verbs and numbers only."
+        ),
         cached_context=profile_context(profile),
         model=prefs.get("writing_model"),
         max_tokens=900,

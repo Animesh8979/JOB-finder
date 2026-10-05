@@ -1,5 +1,28 @@
 """Unit tests for Anti-AI-Slop & Humanizer Engine."""
-from src.anti_slop import audit_and_sanitize, sanitize_punctuation, sanitize_bullet, calculate_burstiness
+from src.anti_slop import (
+    BANNED_AI_TERMS,
+    audit_and_sanitize,
+    calculate_burstiness,
+    sanitize_bullet,
+    sanitize_punctuation,
+)
+
+
+def test_banned_ai_terms_catalog_completeness():
+    """Verify all 35 mandated modern LLM hallmarks are explicitly tracked."""
+    expected = [
+        "delve", "testament", "tapestry", "beacon", "harnessing", "pivotal",
+        "fostered", "realm", "dynamic landscape", "spearheaded synergy",
+        "leverage", "robust", "revolutionize", "plethora", "nestled",
+        "unlock", "seamlessly", "furthermore", "moreover", "in summary",
+        "in conclusion", "game-changer", "paradigm shift", "holistic approach",
+        "cutting-edge", "state-of-the-art", "ever-evolving", "vital role",
+        "crucial", "meticulous", "commendable", "unwavering", "transformative",
+        "journey", "rich tapestry"
+    ]
+    for term in expected:
+        assert term in BANNED_AI_TERMS, f"Missing required banned AI term: {term}"
+
 
 def test_em_dash_elimination():
     raw = "Architected high-throughput pipelines — processing 200k ops/sec — with zero lag."
@@ -8,6 +31,21 @@ def test_em_dash_elimination():
     assert "—" not in cleaned
     assert "--" not in cleaned
     assert "pipelines, processing 200k ops/sec, with zero lag" in cleaned
+
+
+def test_aggressive_punctuation_sanitization():
+    """Verify strip of em-dashes, en-dashes, double-hyphens, curly quotes, and ellipsis."""
+    raw = "Built “distributed” systems ‘V2’ — achieving 99.99% uptime – across 2022–2025… scaling--reducing latency."
+    cleaned, em_count, _ = sanitize_punctuation(raw)
+    assert "—" not in cleaned
+    assert "–" not in cleaned
+    assert "--" not in cleaned
+    assert "“" not in cleaned and "”" not in cleaned
+    assert "‘" not in cleaned and "’" not in cleaned
+    assert "…" not in cleaned
+    assert '"distributed"' in cleaned
+    assert "'V2'" in cleaned
+    assert "2022 - 2025" in cleaned
 
 
 def test_ai_lexicon_sanitization():
@@ -21,7 +59,11 @@ def test_ai_lexicon_sanitization():
     assert not report.is_clean
     assert report.em_dash_count == 0
     assert len(report.flagged_terms) > 3
-    assert "delve" in str(report.flagged_terms).lower() or "delving" in str(report.flagged_terms).lower() or "testament" in str(report.flagged_terms).lower()
+    assert (
+        "delve" in str(report.flagged_terms).lower()
+        or "delving" in str(report.flagged_terms).lower()
+        or "testament" in str(report.flagged_terms).lower()
+    )
     
     # Check that cleaned text eliminates the AI clichés
     cleaned = report.cleaned_text
@@ -33,6 +75,40 @@ def test_ai_lexicon_sanitization():
     assert "leveraged" not in cleaned
     assert "Furthermore," not in cleaned
     assert "Moreover," not in cleaned
+
+
+def test_all_35_banned_terms_sanitized():
+    """Verify all 35 mandated hallmarks are actively flagged and stripped."""
+    slop_snippets = [
+        "We delve into the dynamic landscape.",
+        "A testament to our unwavering journey.",
+        "Harnessing cutting-edge tools in this realm.",
+        "A pivotal role with fostered synergy.",
+        "Spearheaded synergy across teams.",
+        "Leverage robust architectures to revolutionize workflows.",
+        "A plethora of options nestled in the cloud.",
+        "Unlock seamless capabilities seamlessly.",
+        "Furthermore, in summary, moreover, in conclusion.",
+        "A game-changer and paradigm shift with a holistic approach.",
+        "State-of-the-art systems in an ever-evolving market.",
+        "A vital role and crucial outcome.",
+        "Meticulous attention to detail with commendable impact.",
+        "A transformative journey across a rich tapestry.",
+    ]
+    for snippet in slop_snippets:
+        report = audit_and_sanitize(snippet)
+        assert len(report.flagged_terms) > 0, f"Failed to flag snippet: {snippet}"
+        cleaned = report.cleaned_text
+        for banned in [
+            "delve", "testament", "tapestry", "beacon", "harnessing", "pivotal",
+            "fostered", "dynamic landscape", "spearheaded synergy", "leverage",
+            "robust", "revolutionize", "plethora", "nestled", "unlock",
+            "seamlessly", "furthermore", "moreover", "in summary", "in conclusion",
+            "game-changer", "paradigm shift", "holistic approach", "cutting-edge",
+            "state-of-the-art", "ever-evolving", "vital role", "crucial",
+            "meticulous", "commendable", "unwavering", "transformative", "rich tapestry"
+        ]:
+            assert banned not in cleaned.lower(), f"Banned '{banned}' still in cleaned: '{cleaned}'"
 
 
 def test_clean_human_text_passes():

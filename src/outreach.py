@@ -10,6 +10,7 @@ from email.message import EmailMessage
 from . import config, db, llm
 from .documents import slugify
 from .profile_parser import profile_context
+from .anti_slop import audit_and_sanitize
 
 
 def usage_today(prefs: dict) -> tuple[int, int]:
@@ -53,13 +54,19 @@ def draft_email(contact: dict, job: dict | None, profile: dict, prefs: dict,
         "- Personalized to the company/role; reference the candidate's MOST relevant real "
         "experience (no exaggeration, nothing invented).\n"
         "- Polite, confident, specific. A clear, low-pressure ask (consideration or a brief chat).\n"
-        "- Do NOT add a signature, closing, or contact details — those are appended automatically.\n"
+        "- Do NOT add a signature, closing, or contact details, those are appended automatically.\n"
+        "- CRITICAL ANTI-AI-SLOP RULES: Never use em-dashes (—) or double hyphens (--). Use commas or hyphens (-).\n"
+        "- Never use cliché buzzwords like delve/tapestry/spearheaded/fostered/leverage/robust/seamless.\n"
         "- Greet the recipient by name if provided.\n\n"
         "Return JSON: {\"subject\": str (<=70 chars), \"body\": str}."
     )
     data = llm.generate_json(
         prompt,
-        system="You write concise, genuine, non-spammy professional outreach emails.",
+        system=(
+            "You write concise, genuine, non-spammy professional outreach emails. "
+            "Never use em-dashes (—) or cliché AI buzzwords (delve, tapestry, spearheaded, fostered). "
+            "Write authentically like a human engineer."
+        ),
         cached_context=profile_context(profile),
         model=prefs.get("writing_model"),
         max_tokens=600,
@@ -68,6 +75,8 @@ def draft_email(contact: dict, job: dict | None, profile: dict, prefs: dict,
     body = (data.get("body") or "").strip() if isinstance(data, dict) else ""
     if not subject:
         subject = f"Interested in {role} at {company}".strip() or f"Hello from {name}"
+    subject = audit_and_sanitize(subject).cleaned_text
+    body = audit_and_sanitize(body).cleaned_text
     body = f"{body}\n\n{compliance_footer(prefs)}"
     return subject, body
 

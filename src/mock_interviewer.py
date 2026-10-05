@@ -17,6 +17,7 @@ except ImportError:
 
 from . import config, llm
 from .profile_parser import profile_context
+from .anti_slop import audit_and_sanitize
 
 
 def generate_tts_audio(text: str) -> str | None:
@@ -59,12 +60,20 @@ def generate_interview_questions(job: dict[str, Any], profile: dict[str, Any], n
         "1. Technical deep-dives into skills required by the JD where the candidate has relevant projects.\n"
         "2. Bridging gaps where the JD asks for a tool/scale the candidate hasn't explicitly listed.\n"
         "3. A system design or architecture tradeoff question relevant to the company's domain.\n\n"
+        "CRITICAL ANTI-AI-SLOP RULES:\n"
+        "- Never use em-dashes (—) or double hyphens (--). Use commas or hyphens (-).\n"
+        "- Never use cliché buzzwords like delve/tapestry/spearheaded/fostered/robust/pivotal.\n"
+        "- Ask crisp, direct engineering questions with concrete technical scenarios.\n\n"
         "Return a JSON array of objects: [{\"category\": \"Technical|System Design|Gap Bridge\", \"question\": \"...\", \"rationale\": \"Why you are asking this based on their resume/JD\"}]."
     )
     
     data = llm.generate_json(
         prompt,
-        system="You are an insightful, rigorous technical interviewer. Return ONLY valid JSON array.",
+        system=(
+            "You are an insightful, rigorous technical interviewer. "
+            "Never use em-dashes (—) or cliché AI buzzwords (delve, tapestry, spearheaded, fostered, robust). "
+            "Return ONLY valid JSON array."
+        ),
         cached_context=profile_context(profile),
         model=prefs.get("writing_model"),
         max_tokens=1000,
@@ -81,9 +90,17 @@ def generate_interview_questions(job: dict[str, Any], profile: dict[str, Any], n
             "rationale": "Standard introductory question."
         }]
 
-    # Generate TTS audio for each question
+    # Enforce anti-slop post-generation sanitization
     for q in questions:
-        if "question" in q:
+        if isinstance(q, dict):
+            if "question" in q and q["question"]:
+                q["question"] = audit_and_sanitize(str(q["question"])).cleaned_text
+            if "rationale" in q and q["rationale"]:
+                q["rationale"] = audit_and_sanitize(str(q["rationale"])).cleaned_text
+
+    # Generate TTS audio for each sanitized question
+    for q in questions:
+        if "question" in q and q["question"]:
             audio_path = generate_tts_audio(q["question"])
             if audio_path:
                 q["audio_path"] = audio_path

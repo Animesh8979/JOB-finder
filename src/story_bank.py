@@ -11,6 +11,7 @@ import json
 from typing import Any
 from . import config, llm
 from .profile_parser import profile_context
+from .anti_slop import audit_and_sanitize
 
 STORY_BANK_FILE = config.DATA_DIR / "story_bank.json"
 
@@ -47,6 +48,10 @@ def auto_extract_stories_from_profile(profile: dict[str, Any], prefs: dict[str, 
         "- Action: (Specific steps taken and technologies architected)\n"
         "- Result: (Quantified metric, production outcome, or business impact)\n"
         "- Reflection: (The engineering lesson learned and what they would do differently today)\n\n"
+        "CRITICAL ANTI-AI-SLOP RULES:\n"
+        "- Never use em-dashes (—) or double hyphens (--).\n"
+        "- Never use cliché buzzwords like delve/tapestry/spearheaded/fostered/robust/testament/journey.\n"
+        "- Write with concrete engineering verbs and numbers only.\n\n"
         "ZERO-FABRICATION RULE: Ground every story strictly in the candidate's real profile.\n"
         "Return a JSON array of story objects with keys: id (int), competency (str), title (str), situation (str), task (str), action (str), result (str), reflection (str)."
     )
@@ -56,7 +61,11 @@ def auto_extract_stories_from_profile(profile: dict[str, Any], prefs: dict[str, 
         try:
             data = llm.generate_json(
                 prompt,
-                system="You are an expert tech interview architect. Return strictly valid JSON array.",
+                system=(
+                    "You are an expert tech interview architect. "
+                    "Never use em-dashes (—) or cliché AI buzzwords (delve, tapestry, spearheaded, fostered). "
+                    "Return strictly valid JSON array."
+                ),
                 cached_context=profile_context(profile),
                 model=prefs.get("writing_model"),
                 max_tokens=2200
@@ -78,8 +87,23 @@ def auto_extract_stories_from_profile(profile: dict[str, Any], prefs: dict[str, 
             }
         ]
 
-    save_story_bank(data)
-    return data
+    clean_stories = []
+    for s in data:
+        if isinstance(s, dict):
+            clean_s = {
+                "id": s.get("id", len(clean_stories) + 1),
+                "competency": audit_and_sanitize(str(s.get("competency", ""))).cleaned_text,
+                "title": audit_and_sanitize(str(s.get("title", ""))).cleaned_text,
+                "situation": audit_and_sanitize(str(s.get("situation", ""))).cleaned_text,
+                "task": audit_and_sanitize(str(s.get("task", ""))).cleaned_text,
+                "action": audit_and_sanitize(str(s.get("action", ""))).cleaned_text,
+                "result": audit_and_sanitize(str(s.get("result", ""))).cleaned_text,
+                "reflection": audit_and_sanitize(str(s.get("reflection", ""))).cleaned_text,
+            }
+            clean_stories.append(clean_s)
+
+    save_story_bank(clean_stories)
+    return clean_stories
 
 
 def generate_reverse_interview_questions(job: dict[str, Any], prefs: dict[str, Any]) -> list[dict[str, str]]:
@@ -93,6 +117,10 @@ def generate_reverse_interview_questions(job: dict[str, Any], prefs: dict[str, A
         "2. How technical disagreements and roadmap priorities are resolved\n"
         "3. Engineering autonomy vs micromanagement\n"
         "4. Success metrics for this exact role in the first 90 days\n\n"
+        "CRITICAL ANTI-AI-SLOP RULES:\n"
+        "- Never use em-dashes (—) or double hyphens (--).\n"
+        "- Never use cliché buzzwords like delve/tapestry/spearheaded/fostered/robust.\n"
+        "- Write with crisp, authentic developer terminology.\n\n"
         "Return a JSON array of objects: [{\"category\": \"...\", \"question\": \"...\", \"what_to_listen_for\": \"...\"}]"
     )
 
@@ -101,7 +129,10 @@ def generate_reverse_interview_questions(job: dict[str, Any], prefs: dict[str, A
         try:
             data = llm.generate_json(
                 prompt,
-                system="You are an expert engineering leader. Return valid JSON array.",
+                system=(
+                    "You are an expert engineering leader. "
+                    "Never use em-dashes (—) or cliché AI buzzwords. Return valid JSON array."
+                ),
                 model=prefs.get("writing_model"),
                 max_tokens=800
             )
@@ -121,6 +152,13 @@ def generate_reverse_interview_questions(job: dict[str, Any], prefs: dict[str, A
                 "what_to_listen_for": "Look for consensus, data-driven decisions, and psychological safety rather than top-down executive mandates."
             }
         ]
+
+    for q in data:
+        if isinstance(q, dict):
+            for k in ("category", "question", "what_to_listen_for"):
+                if k in q and q[k]:
+                    q[k] = audit_and_sanitize(str(q[k])).cleaned_text
+
     return data
 
 
@@ -140,6 +178,9 @@ def record_interview_debrief(
         "1. Strong points demonstrated\n"
         "2. Vulnerabilities or weak answers detected\n"
         "3. Recommended follow-up thank you email talking point to reinforce fit\n\n"
+        "CRITICAL ANTI-AI-SLOP RULES:\n"
+        "- Never use em-dashes (—) or double hyphens (--).\n"
+        "- Never use cliché buzzwords like delve/tapestry/spearheaded/fostered/robust.\n\n"
         "Return JSON: {\"strong_points\": [\"...\"], \"areas_to_improve\": [\"...\"], \"thank_you_talking_point\": \"...\"}"
     )
 
@@ -148,19 +189,27 @@ def record_interview_debrief(
         try:
             data = llm.generate_json(
                 prompt,
-                system="You are an expert executive interview coach.",
+                system="You are an expert executive interview coach. Never use em-dashes (—) or AI clichés.",
                 model=prefs.get("writing_model"),
                 max_tokens=600
             )
         except Exception:
             data = {}
 
+    critique_data = data or {
+        "strong_points": ["Clear technical communication"],
+        "areas_to_improve": ["Quantify architectural tradeoffs more explicitly"],
+        "thank_you_talking_point": "Reiterate enthusiasm for scaling challenges discussed."
+    }
+
+    clean_critique = {
+        "strong_points": [audit_and_sanitize(str(p)).cleaned_text for p in critique_data.get("strong_points", []) if p],
+        "areas_to_improve": [audit_and_sanitize(str(p)).cleaned_text for p in critique_data.get("areas_to_improve", []) if p],
+        "thank_you_talking_point": audit_and_sanitize(str(critique_data.get("thank_you_talking_point", ""))).cleaned_text
+    }
+
     return {
         "job_id": job_id,
         "round_name": round_name,
-        "critique": data or {
-            "strong_points": ["Clear technical communication"],
-            "areas_to_improve": ["Quantify architectural tradeoffs more explicitly"],
-            "thank_you_talking_point": "Reiterate enthusiasm for scaling challenges discussed."
-        }
+        "critique": clean_critique
     }
